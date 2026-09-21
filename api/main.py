@@ -18,7 +18,7 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from state import StateError, StateRepo, distance_m
+from state import DriftError, StateError, StateRepo, distance_m
 
 STATE = Path(os.environ.get("UTULIE_STATE", "./state-repo")).resolve()
 
@@ -47,8 +47,19 @@ def _state_error(_request, exc: StateError):
 def guard(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
+    except DriftError as e:
+        # 409: the caller's view is stale, not malformed. Re-read and retry.
+        raise HTTPException(409, {"error": str(e), "expected": e.expected,
+                                  "head": e.actual}) from e
     except StateError as e:
         raise HTTPException(400, str(e)) from e
+
+
+EXPECT = Field(
+    None,
+    description="The `head` you read before acting. Refused with 409 if the repo "
+                "has moved since. Omit to write unconditionally.",
+)
 
 
 # -- models ------------------------------------------------------------
@@ -60,6 +71,7 @@ class NewThing(BaseModel):
         False, description="Stacking stock. Items only; quantity lives on each placement"
     )
     id: str | None = Field(None, description="Reuse an existing quid instead of minting")
+    expect: str | None = EXPECT
 
 
 class Placing(BaseModel):
@@ -70,15 +82,18 @@ class Placing(BaseModel):
                     "it does not add to it -- so a replayed offline action "
                     "cannot double it.",
     )
+    expect: str | None = EXPECT
 
 
 class Naming(BaseModel):
     name: str = Field(..., description="Lowercase, path-safe. Unique within the kind")
+    expect: str | None = EXPECT
 
 
 class Position(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
     lon: float = Field(..., ge=-180, le=180)
+    expect: str | None = EXPECT
 
 
 class Quantity(BaseModel):
@@ -86,6 +101,7 @@ class Quantity(BaseModel):
     quantity: int = Field(
         ..., description="The new count in this container. 0 removes the placement."
     )
+    expect: str | None = EXPECT
 
 
 # -- read --------------------------------------------------------------
@@ -99,7 +115,7 @@ def things():
     r = repo()
     _, placements = r.index()
     placed = {p.id for p in placements}
-    return [
+    return {"head": r.head(), "things": [
         {
             "id": d.id,
             "kind": d.kind,
@@ -110,7 +126,7 @@ def things():
             "placed": d.id in placed,
         }
         for d in r.docs().values()
-    ]
+    ]}
 
 
 def _here(from_: str | None) -> dict | None:
@@ -156,6 +172,7 @@ def thing(id: str, from_: str | None = Query(
             for p in r.locate(id)
         ],
         **_where(r, id, _here(from_)),
+        "head": r.head(),
     }
 
 
@@ -172,13 +189,14 @@ def contents(id: str, from_: str | None = Query(
             {"id": d.id, "kind": d.kind, "title": d.title, "gist": d.gist,
              "quantity": p.quantity, **_where(r, d.id, here)}
         )
-    return out
+    return {"head": r.head(), "contents": out}
 
 
 @app.put("/things/{id}/position", summary="Record where a thing was last seen")
 def set_position(id: str, body: Position):
-    guard(repo().set_position, id, body.lat, body.lon)
-    return {"ok": True}
+    r = repo()
+    guard(r.set_position, id, body.lat, body.lon, expect=body.expect)
+    return {"ok": True, "head": r.head()}
 
 
 @app.get("/tree", response_class=PlainTextResponse,
@@ -214,7 +232,10 @@ def tree():
 
 @app.get("/check", summary="Integrity problems, empty when healthy")
 def check():
-    return [{"kind": p.kind, "id": p.id, "detail": p.detail} for p in repo().check()]
+    r = repo()
+    return {"head": r.head(),
+            "problems": [{"kind": p.kind, "id": p.id, "detail": p.detail}
+                         for p in r.check()]}
 
 
 # -- write -------------------------------------------------------------
@@ -230,43 +251,49 @@ def init():
 def mint(body: NewThing):
     r = repo()
     id_ = guard(r.mint, body.kind, body.title, body.gist,
-                fungible=body.fungible, id_=body.id)
-    return {"id": id_}
+                fungible=body.fungible, id_=body.id, expect=body.expect)
+    return {"id": id_, "head": r.head()}
 
 
 @app.post("/things/{id}/place",
           summary="Put a thing somewhere. Moves it if it was elsewhere")
 def place(id: str, body: Placing):
-    guard(repo().place, id, body.container, body.quantity)
-    return {"ok": True}
+    r = repo()
+    guard(r.place, id, body.container, body.quantity, expect=body.expect)
+    return {"ok": True, "head": r.head()}
 
 
 @app.post("/things/{id}/check-out", summary="Take it out; the doc survives")
-def check_out(id: str):
-    guard(repo().check_out, id)
-    return {"ok": True}
+def check_out(id: str, expect: str | None = Query(None, description="Head you read")):
+    r = repo()
+    guard(r.check_out, id, expect=expect)
+    return {"ok": True, "head": r.head()}
 
 
 @app.put("/things/{id}/quantity", summary="Set a fungible item's count in one container")
 def set_quantity(id: str, body: Quantity):
-    guard(repo().set_quantity, id, body.container, body.quantity)
-    return {"ok": True}
+    r = repo()
+    guard(r.set_quantity, id, body.container, body.quantity, expect=body.expect)
+    return {"ok": True, "head": r.head()}
 
 
 @app.put("/things/{id}/name", summary="Rename: kb field and tree entry, one commit")
 def rename(id: str, body: Naming):
-    guard(repo().rename, id, body.name)
-    return {"ok": True}
+    r = repo()
+    guard(r.rename, id, body.name, expect=body.expect)
+    return {"ok": True, "head": r.head()}
 
 
 @app.get("/last-action", summary="What the most recent action was")
 def last_action():
-    return {"action": repo().last_action()}
+    r = repo()
+    return {"head": r.head(), "action": r.last_action()}
 
 
 @app.post("/undo", summary="Reverse the last action")
-def undo():
-    return {"undone": guard(repo().undo)}
+def undo(expect: str | None = Query(None, description="Head you read")):
+    r = repo()
+    return {"undone": guard(r.undo, expect=expect), "head": r.head()}
 
 
 @app.post("/sync", summary="Push the state repo to its remote")

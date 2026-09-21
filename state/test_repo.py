@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from .repo import StateError, StateRepo, distance_m, new_id
+from .repo import DriftError, StateError, StateRepo, distance_m, new_id
 
 
 @pytest.fixture
@@ -382,3 +382,54 @@ def test_setting_a_position_is_one_commit(repo, house):
     before = int(repo._git("rev-list", "--count", "HEAD").strip())
     repo.set_position(house["garage"], *GARAGE_POS)
     assert int(repo._git("rev-list", "--count", "HEAD").strip()) == before + 1
+
+
+def test_head_changes_with_every_action(repo, house):
+    before = repo.head()
+    repo.mint("item", "A thing", "some thing")
+    assert repo.head() != before
+
+
+def test_a_write_against_the_current_head_is_allowed(repo, house):
+    box = repo.mint("item", "Label box", "a box of labels")
+    repo.place(box, house["tin"], expect=repo.head())
+    assert repo.locate(box)[0].container == house["tin"]
+
+
+def test_a_write_against_a_stale_head_is_refused(repo, house):
+    """Read, someone else writes, then you write: your view was stale."""
+    stale = repo.head()
+    box = repo.mint("item", "Label box", "a box of labels")     # the other writer
+    with pytest.raises(DriftError, match="state moved"):
+        repo.place(box, house["tin"], expect=stale)
+
+
+def test_a_refused_write_changes_nothing(repo, house):
+    stale = repo.head()
+    box = repo.mint("item", "Label box", "a box of labels")
+    head_before = repo.head()
+    with pytest.raises(DriftError):
+        repo.place(box, house["tin"], expect=stale)
+    assert repo.head() == head_before
+    assert repo.locate(box) == []
+
+
+def test_drift_reports_both_shas_so_a_client_can_explain_itself(repo, house):
+    stale = repo.head()
+    repo.mint("item", "A thing", "some thing")
+    try:
+        repo.rename(house["garage"], "garage", expect=stale)
+    except DriftError as e:
+        assert e.expected == stale
+        assert e.actual == repo.head()
+    else:
+        pytest.fail("expected DriftError")
+
+
+def test_a_short_sha_matches(repo, house):
+    repo.rename(house["garage"], "garage", expect=repo.head()[:8])
+
+
+def test_omitting_expect_writes_unconditionally(repo, house):
+    repo.mint("item", "A thing", "some thing")
+    repo.rename(house["garage"], "garage")      # no expect, no complaint

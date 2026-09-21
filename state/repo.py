@@ -96,6 +96,16 @@ class StateError(Exception):
     pass
 
 
+class DriftError(StateError):
+    """The repo moved under a caller who was acting on an older view."""
+
+    def __init__(self, expected: str, actual: str):
+        self.expected, self.actual = expected, actual
+        super().__init__(
+            f"state moved: you acted on {expected[:8]}, repo is at {actual[:8]}. "
+            "Re-read and try again.")
+
+
 class StateRepo:
     def __init__(self, root: Path | str):
         self.root = Path(root)
@@ -114,6 +124,20 @@ class StateRepo:
         if not self._git("status", "--porcelain").strip():
             return
         self._git("commit", "-q", "-m", message)
+
+    def head(self) -> str:
+        """The commit every read is a view of, and every write asserts against."""
+        try:
+            return self._git("rev-parse", "HEAD").strip()
+        except StateError:
+            return ""
+
+    def _expect(self, expect: str | None) -> None:
+        if expect is None:
+            return
+        actual = self.head()
+        if not actual.startswith(expect) and not expect.startswith(actual):
+            raise DriftError(expect, actual)
 
     def init(self) -> None:
         (self.root / KB).mkdir(parents=True, exist_ok=True)
@@ -219,7 +243,8 @@ class StateRepo:
 
     # -- writes ---------------------------------------------------------
     def mint(self, kind: str, title: str, gist: str, *, fungible: bool = False,
-             id_: str | None = None) -> str:
+             id_: str | None = None, expect: str | None = None) -> str:
+        self._expect(expect)
         if kind not in KINDS:
             raise StateError(f"kind must be one of {KINDS}, got {kind!r}")
         if fungible and kind != "item":
@@ -239,13 +264,14 @@ class StateRepo:
         return self.root / hits[0].path if len(hits) == 1 else None
 
     def place(self, id_: str, container_id: str | None = None,
-              quantity: int | None = None) -> None:
+              quantity: int | None = None, expect: str | None = None) -> None:
         """Put a thing somewhere. One verb, whatever it was doing before.
 
         Already somewhere else and not fungible, it moves -- a container takes
         its contents along. Fungible stock placed somewhere new gains a second
         placement, because being in two bins at once is the whole point of it.
         """
+        self._expect(expect)
         doc = self.doc(id_)
         containers, _ = self.index()
         parent = self.root / TREE
@@ -292,7 +318,8 @@ class StateRepo:
             write_lines(parent / doc.name, lines)
         self._commit(f"place {doc.title} in {where}")
 
-    def check_out(self, id_: str) -> None:
+    def check_out(self, id_: str, expect: str | None = None) -> None:
+        self._expect(expect)
         doc = self.doc(id_)
         src = self._entry_path(id_)
         if src is None:
@@ -312,7 +339,9 @@ class StateRepo:
         self._git("rm", "-r", "-q", src.relative_to(self.root).as_posix())
         self._commit(f"check out {doc.title}")
 
-    def set_quantity(self, id_: str, container_id: str, quantity: int) -> None:
+    def set_quantity(self, id_: str, container_id: str, quantity: int,
+                     expect: str | None = None) -> None:
+        self._expect(expect)
         doc = self.doc(id_)
         if not doc.fungible:
             raise StateError(f"{id_} is not fungible")
@@ -330,7 +359,8 @@ class StateRepo:
         write_lines(entry, [f"id: {id_}", f"quantity: {quantity}"])
         self._commit(f"set {doc.title} to {quantity} in {where}")
 
-    def rename(self, id_: str, name: str) -> None:
+    def rename(self, id_: str, name: str, expect: str | None = None) -> None:
+        self._expect(expect)
         if not NAME_RE.match(name):
             raise StateError(
                 f"name must match {NAME_RE.pattern} -- lowercase, no spaces")
@@ -349,13 +379,15 @@ class StateRepo:
                       (src.parent / name).relative_to(self.root).as_posix())
         self._commit(f"rename {old} to {name}")
 
-    def set_position(self, id_: str, lat: float, lon: float) -> None:
+    def set_position(self, id_: str, lat: float, lon: float,
+                     expect: str | None = None) -> None:
         """Record where a thing was last seen.
 
         `at` is stored rather than read back out of git: how stale a position
         is decides how much to trust it, and a blame per item on every scan is
         not a thing to build a lookup on.
         """
+        self._expect(expect)
         if not -90 <= lat <= 90 or not -180 <= lon <= 180:
             raise StateError(f"{lat},{lon} is not a coordinate")
         doc = self.doc(id_)
@@ -386,13 +418,14 @@ class StateRepo:
     def last_action(self) -> str:
         return self._git("log", "-1", "--format=%s").strip()
 
-    def undo(self) -> str:
+    def undo(self, expect: str | None = None) -> str:
         """Revert the last action, keeping it in the history.
 
         A revert rather than a reset, because the repo may already be pushed
         and because losing the record of a mistake loses the evidence of what
         actually happened to the physical thing. Reverting a revert is a redo.
         """
+        self._expect(expect)
         if len(self._git("log", "--format=%h").split()) < 2:
             raise StateError("nothing to undo")
         subject = self.last_action()

@@ -117,6 +117,24 @@ placed-twice.
 | elsewhere, not fungible | moved, contents and all |
 | elsewhere, fungible | a second placement — being in two bins is the point |
 
+## Drift
+
+Every read returns `head`, the commit it is a view of. Every write takes an
+optional `expect`; if the repo has moved since, the write is refused with a
+`DriftError` naming both shas, and nothing is written. Over HTTP that is a 409,
+because the caller's view is stale rather than their request malformed.
+
+This is what makes read-modify-write safe — adding six to a count means reading
+it and writing the sum, and `expect` is what stops a concurrent write being
+lost in between.
+
+`expect` is optional rather than required, because the PWA replays queued
+offline actions and each carries the head from when it was queued. Replaying
+five actions, only the first could match; the rest would 409 against a head
+that moved because of the earlier replays. A client that re-stamps each action
+as it drains the queue is asserting nothing anyway. So: pass it when you read
+first and act on what you read, omit it when you are replaying intent.
+
 ## Undo
 
 `undo()` reverts the last action as a new commit rather than resetting. The
