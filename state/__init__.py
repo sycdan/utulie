@@ -1,3 +1,3 @@
-from .repo import StateRepo, Doc, Placement, Problem
+from .repo import Doc, Placement, Problem, StateError, StateRepo
 
-__all__ = ["StateRepo", "Doc", "Placement", "Problem"]
+__all__ = ["StateRepo", "Doc", "Placement", "Problem", "StateError"]
