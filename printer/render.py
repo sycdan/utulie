@@ -10,7 +10,7 @@ BASE = "HTTPS://QRGU.ID/"   # scheme required: iOS treats a bare domain as a sea
 MEDIA = {                               # feed x head, in dots
     "item-50x30":            dict(feed=240, head=376, shape="rect"),
     "container-50x50-round": dict(feed=390, head=376, shape="round"),
-    "container-50x70":       dict(feed=559, head=376, shape="rect-tall"),
+    "container-40x70":       dict(feed=533, head=330, shape="rect-tall"),
 }
 
 

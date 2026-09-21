@@ -27,12 +27,19 @@ The quid is never truncated: every shorter payload lands on the same module coun
 | --- | --- | --- | --- |
 | `item-50x30` | 27.2 mm | 0.876 mm | 47 cm |
 | `container-50x50-round` | 32.7 mm | 1.126 mm | 48 cm, on a curved surface |
-| `container-50x70` | 42.7 mm | 1.376 mm | 71 cm |
+| `container-40x70` | 38.8 mm | 1.251 mm | not yet measured |
 
 Module pitch quantizes to whole printer dots, so these are steps, not tunable.
 
-Big bins take `container-50x70`; rounds are for containers too small or too
+Big bins take `container-40x70`; rounds are for containers too small or too
 curved for a rectangle.
+
+Media dimensions are the *stock*, measured, not the printhead. The 70 mm stock
+was first assumed to be 50 mm wide and calibrated against the full 376-dot
+printhead; it is actually 41.3 mm (2 5/8 x 1 5/8 in), so that label printed
+~5 dots wider than the label on each side. It scanned -- the overhang came out
+of the quiet zone, not the data -- and read at 71 cm, but that geometry is not
+reproducible and the entry has been corrected to fit the stock.
 
 ## Use
 
