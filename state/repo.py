@@ -339,6 +339,27 @@ class StateRepo:
         self._git("rm", "-r", "-q", src.relative_to(self.root).as_posix())
         self._commit(f"check out {doc.title}")
 
+    def delete(self, id_: str, expect: str | None = None) -> None:
+        """Erase a thing minted by mistake -- doc, placements and all.
+
+        Distinct from check-out, which keeps the identity because the labelled
+        thing still exists somewhere. This is for a mistap: the thing never
+        existed, so leaving a doc behind would be a container that looks like
+        somebody carried it off.
+        """
+        self._expect(expect)
+        doc = self.doc(id_)
+        if doc.kind == "container":
+            inside = [self.doc(p.id).title for p in self.contents(id_)]
+            if inside:
+                raise StateError(
+                    f"{doc.title} still holds {len(inside)} thing(s): "
+                    + ", ".join(sorted(inside)) + ". Empty it first.")
+        for placement in self.locate(id_):
+            self._git("rm", "-r", "-q", placement.path)
+        self._git("rm", "-q", f"{KB}/{id_}.md")
+        self._commit(f"delete {doc.title} ({id_})")
+
     def set_quantity(self, id_: str, container_id: str, quantity: int,
                      expect: str | None = None) -> None:
         self._expect(expect)

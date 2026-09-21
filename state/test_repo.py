@@ -433,3 +433,35 @@ def test_a_short_sha_matches(repo, house):
 def test_omitting_expect_writes_unconditionally(repo, house):
     repo.mint("item", "A thing", "some thing")
     repo.rename(house["garage"], "garage")      # no expect, no complaint
+
+
+def test_delete_erases_doc_and_placement(repo, house):
+    """For a mistap. Check-out keeps the identity; delete does not."""
+    box = repo.mint("item", "Oops", "minted by mistake")
+    repo.place(box, house["tin"])
+    repo.delete(box)
+    assert repo.locate(box) == []
+    with pytest.raises(StateError, match="no kb doc"):
+        repo.doc(box)
+    assert repo.check() == []
+
+
+def test_delete_refuses_a_container_with_contents(repo, house):
+    with pytest.raises(StateError, match="still holds"):
+        repo.delete(house["office"])
+
+
+def test_delete_works_on_something_never_placed(repo, house):
+    stray = repo.mint("container", "Oops", "minted by mistake")
+    repo.delete(stray)
+    assert stray not in repo.docs()
+
+
+def test_undo_twice_is_a_redo_not_two_steps_back(repo, house):
+    """LIFO on commits. Repeated undo toggles; it does not walk back."""
+    box = repo.mint("item", "Label box", "a box of labels")
+    repo.place(box, house["tin"])
+    repo.undo()
+    assert repo.locate(box) == []
+    repo.undo()
+    assert repo.locate(box)[0].container == house["tin"]

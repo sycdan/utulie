@@ -270,6 +270,14 @@ def check_out(id: str, expect: str | None = Query(None, description="Head you re
     return {"ok": True, "head": r.head()}
 
 
+@app.delete("/things/{id}",
+            summary="Erase a mis-minted thing. Not the same as checking it out")
+def delete(id: str, expect: str | None = Query(None, description="Head you read")):
+    r = repo()
+    guard(r.delete, id, expect=expect)
+    return {"ok": True, "head": r.head()}
+
+
 @app.put("/things/{id}/quantity", summary="Set a fungible item's count in one container")
 def set_quantity(id: str, body: Quantity):
     r = repo()
