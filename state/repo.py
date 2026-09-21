@@ -134,20 +134,12 @@ class StateRepo:
         )
 
     def _write_doc(self, doc: Doc) -> None:
-        # KINGSMetaL: fixed field order, and prose values are always quoted --
-        # yaml.safe_dump only quotes when it has to, which drifts from the spec.
-        quoted = doc.gist.replace("\\", "\\\\").replace('"', '\\"')
-        lines = [
-            f"kind: {doc.kind}",
-            f"id: {doc.id}",
-            f"name: {doc.name}",
-            f'gist: "{quoted}"',
-        ]
+        # KINGSMetaL field order. Insertion order plus sort_keys=False gives it
+        # in one dump; quoting is the yaml library's business, not ours.
+        data = {"kind": doc.kind, "id": doc.id, "name": doc.name, "gist": doc.gist}
         if doc.meta:
-            lines.append("meta:")
-            dumped = yaml.safe_dump(doc.meta, sort_keys=False, allow_unicode=True)
-            lines += [f"  {ln}" for ln in dumped.rstrip("\n").splitlines()]
-        fm = "".join(f"{ln}\n" for ln in lines)
+            data["meta"] = doc.meta
+        fm = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, indent=2)
         self._doc_path(doc.id).write_text(
             f"---\n{fm}---\n\n# {doc.title}\n", encoding="utf-8", newline="\n"
         )

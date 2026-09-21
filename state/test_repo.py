@@ -208,11 +208,12 @@ def test_files_are_written_with_lf(repo, house):
     assert b"\r\n" not in raw
 
 
-def test_gist_is_always_quoted(repo):
-    """KINGSMetaL quotes prose values; safe_dump only quotes when forced."""
-    id_ = repo.mint("item", "A thing", "plain prose needing no escape")
-    raw = (repo.root / "kb" / f"{id_}.md").read_text()
-    assert 'gist: "plain prose needing no escape"' in raw
+def test_frontmatter_is_valid_yaml(repo):
+    """Quoting is the yaml library's business; validity is ours."""
+    import yaml
+    id_ = repo.mint("item", "A thing", "plain prose: with a colon, and #hash")
+    frontmatter = (repo.root / "kb" / f"{id_}.md").read_text().split("---\n")[1]
+    assert yaml.safe_load(frontmatter)["gist"] == "plain prose: with a colon, and #hash"
 
 
 def test_gist_survives_quotes_and_backslashes(repo):
