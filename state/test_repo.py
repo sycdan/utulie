@@ -260,3 +260,41 @@ def test_an_empty_container_can_be_checked_out(repo, house):
 def test_checking_out_a_container_names_what_is_inside(repo, house):
     with pytest.raises(StateError, match="Amaretti tin"):
         repo.check_out(house["office"])
+
+
+def test_undo_reverses_the_last_action(repo, house):
+    box = repo.mint("item", "Label box", "a box of labels")
+    repo.place(box, house["tin"])
+    repo.move(box, house["garage"])
+    assert repo.undo() == "move Label box to Garage"
+    assert repo.locate(box)[0].container == house["tin"]
+
+
+def test_undo_restores_a_checked_out_item(repo, house):
+    box = repo.mint("item", "Label box", "a box of labels")
+    repo.place(box, house["tin"])
+    repo.check_out(box)
+    repo.undo()
+    assert repo.locate(box)[0].container == house["tin"]
+
+
+def test_undo_is_itself_undoable_as_a_redo(repo, house):
+    box = repo.mint("item", "Label box", "a box of labels")
+    repo.place(box, house["tin"])
+    repo.check_out(box)
+    repo.undo()
+    repo.undo()
+    assert repo.locate(box) == []
+
+
+def test_undo_keeps_the_history_rather_than_rewriting_it(repo, house):
+    before = repo._git("rev-list", "--count", "HEAD").strip()
+    box = repo.mint("item", "Label box", "a box of labels")
+    repo.undo()
+    after = repo._git("rev-list", "--count", "HEAD").strip()
+    assert int(after) == int(before) + 2      # the action, then its undo
+
+
+def test_undo_refuses_on_a_fresh_repo(repo):
+    with pytest.raises(StateError, match="nothing to undo"):
+        repo.undo()

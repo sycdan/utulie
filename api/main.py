@@ -220,6 +220,16 @@ def rename(id: str, body: Naming):
     return {"ok": True}
 
 
+@app.get("/last-action", summary="What the most recent action was")
+def last_action():
+    return {"action": repo().last_action()}
+
+
+@app.post("/undo", summary="Reverse the last action")
+def undo():
+    return {"undone": guard(repo().undo)}
+
+
 @app.post("/sync", summary="Push the state repo to its remote")
 def sync(remote: str = Body("origin", embed=True)):
     env = dict(os.environ)

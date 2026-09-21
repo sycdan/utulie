@@ -330,6 +330,23 @@ class StateRepo:
                       (src.parent / name).relative_to(self.root).as_posix())
         self._commit(f"rename {old} to {name}")
 
+    def last_action(self) -> str:
+        return self._git("log", "-1", "--format=%s").strip()
+
+    def undo(self) -> str:
+        """Revert the last action, keeping it in the history.
+
+        A revert rather than a reset, because the repo may already be pushed
+        and because losing the record of a mistake loses the evidence of what
+        actually happened to the physical thing. Reverting a revert is a redo.
+        """
+        if len(self._git("log", "--format=%h").split()) < 2:
+            raise StateError("nothing to undo")
+        subject = self.last_action()
+        self._git("revert", "--no-edit", "--no-commit", "HEAD")
+        self._git("commit", "-q", "-m", f"undo: {subject}")
+        return subject
+
     # -- integrity ------------------------------------------------------
     def check(self) -> list[Problem]:
         docs = self.docs()

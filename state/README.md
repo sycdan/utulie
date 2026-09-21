@@ -74,6 +74,13 @@ put-away flow, which happens in a garage on marginal wifi. It would also mean
 utulie cannot ship without nosedive — the product's runtime depending on the
 dev bridge. The format is what matters, not the binary that produces it.
 
+## Undo
+
+`undo()` reverts the last action as a new commit rather than resetting. The
+repo may already be pushed, and losing the record of a mistake loses the
+evidence of what actually happened to the physical thing. Undoing an undo is
+a redo.
+
 ## Checking out a container
 
 Refused while it still holds anything. Checked out means "has no placement",
