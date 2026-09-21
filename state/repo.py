@@ -134,14 +134,20 @@ class StateRepo:
         )
 
     def _write_doc(self, doc: Doc) -> None:
-        data = {"kind": doc.kind, "id": doc.id, "name": doc.name, "gist": doc.gist}
+        # KINGSMetaL: fixed field order, and prose values are always quoted --
+        # yaml.safe_dump only quotes when it has to, which drifts from the spec.
+        quoted = doc.gist.replace("\\", "\\\\").replace('"', '\\"')
+        lines = [
+            f"kind: {doc.kind}",
+            f"id: {doc.id}",
+            f"name: {doc.name}",
+            f'gist: "{quoted}"',
+        ]
         if doc.meta:
-            data["meta"] = doc.meta
-        fm = "".join(
-            yaml.safe_dump({k: data[k]}, sort_keys=False, allow_unicode=True)
-            for k in FIELD_ORDER
-            if k in data
-        )
+            lines.append("meta:")
+            dumped = yaml.safe_dump(doc.meta, sort_keys=False, allow_unicode=True)
+            lines += [f"  {ln}" for ln in dumped.rstrip("\n").splitlines()]
+        fm = "".join(f"{ln}\n" for ln in lines)
         self._doc_path(doc.id).write_text(
             f"---\n{fm}---\n\n# {doc.title}\n", encoding="utf-8", newline="\n"
         )

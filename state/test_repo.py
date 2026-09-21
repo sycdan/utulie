@@ -206,3 +206,23 @@ def test_every_write_makes_exactly_one_commit(repo, house):
 def test_files_are_written_with_lf(repo, house):
     raw = (repo.root / "kb" / f"{house['tin']}.md").read_bytes()
     assert b"\r\n" not in raw
+
+
+def test_gist_is_always_quoted(repo):
+    """KINGSMetaL quotes prose values; safe_dump only quotes when forced."""
+    id_ = repo.mint("item", "A thing", "plain prose needing no escape")
+    raw = (repo.root / "kb" / f"{id_}.md").read_text()
+    assert 'gist: "plain prose needing no escape"' in raw
+
+
+def test_gist_survives_quotes_and_backslashes(repo):
+    id_ = repo.mint("item", "A thing", 'a "quoted" c:\path thing')
+    assert repo.doc(id_).gist == 'a "quoted" c:\path thing'
+
+
+def test_field_order_follows_kingsmetal(repo):
+    id_ = repo.mint("item", "Screw", "stainless", fungible=True)
+    frontmatter = (repo.root / "kb" / f"{id_}.md").read_text().split("---\n")[1]
+    keys = [ln.split(":")[0] for ln in frontmatter.splitlines()
+            if ln and not ln.startswith(" ")]
+    assert keys == ["kind", "id", "name", "gist", "meta"]
