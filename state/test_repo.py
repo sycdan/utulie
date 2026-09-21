@@ -239,3 +239,24 @@ def test_ids_are_uuid7_with_a_decodable_timestamp():
     stamp = int(uuid.UUID(a).hex[:12], 16)
     assert before - 1000 <= stamp <= before + 1000   # leading 48 bits are the ms
     assert a < b                                      # monotonic, so ids sort by age
+
+
+def test_checking_out_a_full_container_is_refused(repo, house):
+    """It would delete the contents' placements as collateral."""
+    box = repo.mint("item", "Label box", "a box of labels")
+    repo.place(box, house["tin"])
+    with pytest.raises(StateError, match="still holds 1 thing"):
+        repo.check_out(house["tin"])
+    assert len(repo.locate(box)) == 1
+    assert len(repo.locate(house["tin"])) == 1
+
+
+def test_an_empty_container_can_be_checked_out(repo, house):
+    repo.check_out(house["garage"])
+    assert repo.locate(house["garage"]) == []
+    assert repo.check() == []
+
+
+def test_checking_out_a_container_names_what_is_inside(repo, house):
+    with pytest.raises(StateError, match="Amaretti tin"):
+        repo.check_out(house["office"])

@@ -74,6 +74,16 @@ put-away flow, which happens in a garage on marginal wifi. It would also mean
 utulie cannot ship without nosedive — the product's runtime depending on the
 dev bridge. The format is what matters, not the binary that produces it.
 
+## Checking out a container
+
+Refused while it still holds anything. Checked out means "has no placement",
+and a checked-out container cannot also hold things — its contents would have
+nowhere to live — so taking it would delete their placements as collateral.
+Empty it, or move the contents somewhere, first.
+
+If you really are carrying a full bin out of the house, the honest move is to
+*move* it into a container that represents where it went, not to check it out.
+
 ## Writes
 
 One commit per action. The log is the audit trail, diffs stay legible, and

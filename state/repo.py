@@ -278,6 +278,18 @@ class StateRepo:
         src = self._entry_path(id_)
         if src is None:
             raise StateError(f"{id_} is not placed exactly once")
+        if doc.kind == "container":
+            # Checked out means "has no placement". A container cannot be
+            # checked out and still hold things -- there would be nowhere for
+            # its contents to live -- so taking it would delete their
+            # placements too. Refuse instead, loudly.
+            inside = [self.doc(p.id).title for p in self.contents(id_)]
+            if inside:
+                raise StateError(
+                    f"{doc.title} still holds {len(inside)} thing(s): "
+                    + ", ".join(sorted(inside))
+                    + ". Empty it or move them first; checking it out would "
+                    "drop their placements too.")
         self._git("rm", "-r", "-q", src.relative_to(self.root).as_posix())
         self._commit(f"check out {doc.title}")
 
