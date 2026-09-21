@@ -64,7 +64,12 @@ class NewThing(BaseModel):
 
 class Placing(BaseModel):
     container: str | None = Field(None, description="Container id, or null for the tree root")
-    quantity: int | None = Field(None, description="Fungible items only")
+    quantity: int | None = Field(
+        None,
+        description="Fungible items only. Sets the count in this container, "
+                    "it does not add to it -- so a replayed offline action "
+                    "cannot double it.",
+    )
 
 
 class Naming(BaseModel):
@@ -78,7 +83,9 @@ class Position(BaseModel):
 
 class Quantity(BaseModel):
     container: str
-    quantity: int = Field(..., description="0 removes the placement")
+    quantity: int = Field(
+        ..., description="The new count in this container. 0 removes the placement."
+    )
 
 
 # -- read --------------------------------------------------------------
@@ -227,15 +234,10 @@ def mint(body: NewThing):
     return {"id": id_}
 
 
-@app.post("/things/{id}/place", summary="Put a thing in a container")
+@app.post("/things/{id}/place",
+          summary="Put a thing somewhere. Moves it if it was elsewhere")
 def place(id: str, body: Placing):
     guard(repo().place, id, body.container, body.quantity)
-    return {"ok": True}
-
-
-@app.post("/things/{id}/move", summary="Move a thing, contents and all")
-def move(id: str, body: Placing):
-    guard(repo().move, id, body.container)
     return {"ok": True}
 
 

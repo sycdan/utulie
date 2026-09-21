@@ -54,6 +54,11 @@ still an item and mutating `kind` would collide with correcting a mistap.
 Quantity lives on the placement, not the doc, so the same screw type holds
 different counts in different bins.
 
+Quantity **sets** the count in a container, it never adds to it. The PWA
+queues actions offline and replays them on reconnect, and a replayed "add 6"
+silently doubles your screw count where a replayed "set 12" is harmless.
+Adding six means reading the count and writing the sum.
+
 Quantity zero is never written; the placement is removed instead. Absent and
 zero must not be two spellings of one state.
 
@@ -94,6 +99,23 @@ is centimetres, well under any phone's GPS error.
 
 Whether a phone can actually tell the garage from the shed is a separate
 question, and belongs to the geolocation spike, not here.
+
+## One verb for putting things somewhere
+
+`place()` only. It creates a placement, or moves an existing one, or updates a
+fungible count, depending on where the thing already is. A separate `move()`
+existed briefly and was removed: the only thing distinguishing it was the
+starting state, which is an implementation detail rather than something a
+caller should have to know. Worse, `place()` on an already-placed container
+made a second directory instead of moving it, which `check()` then reported as
+placed-twice.
+
+| thing is | result |
+| --- | --- |
+| nowhere | placed |
+| already there | nothing, no commit |
+| elsewhere, not fungible | moved, contents and all |
+| elsewhere, fungible | a second placement — being in two bins is the point |
 
 ## Undo
 

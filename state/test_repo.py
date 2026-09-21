@@ -64,12 +64,35 @@ def test_contents_lists_direct_children(repo, house):
     assert kids == {house["office"], house["garage"]}
 
 
-def test_non_fungible_item_is_placed_exactly_once(repo, house):
+def test_placing_a_non_fungible_item_again_moves_it(repo, house):
+    """One verb. A thing that is not fungible can only be in one place."""
     box = repo.mint("item", "Label box", "a box of labels")
     repo.place(box, house["tin"])
-    assert len(repo.locate(box)) == 1
-    with pytest.raises(StateError, match="already placed"):
-        repo.place(box, house["garage"])
+    repo.place(box, house["garage"])
+    assert [p.container for p in repo.locate(box)] == [house["garage"]]
+
+
+def test_placing_something_where_it_already_is_does_nothing(repo, house):
+    box = repo.mint("item", "Label box", "a box of labels")
+    repo.place(box, house["tin"])
+    before = repo._git("rev-list", "--count", "HEAD").strip()
+    repo.place(box, house["tin"])
+    assert repo._git("rev-list", "--count", "HEAD").strip() == before
+
+
+def test_placing_fungible_stock_somewhere_new_adds_a_placement(repo, house):
+    """Being in two bins at once is the point of fungible."""
+    screw = repo.mint("item", "M4 screw", "stainless", fungible=True)
+    repo.place(screw, house["tin"], quantity=40)
+    repo.place(screw, house["garage"], quantity=6)
+    assert len(repo.locate(screw)) == 2
+
+
+def test_placing_fungible_stock_where_it_is_updates_the_count(repo, house):
+    screw = repo.mint("item", "M4 screw", "stainless", fungible=True)
+    repo.place(screw, house["tin"], quantity=40)
+    repo.place(screw, house["tin"], quantity=12)
+    assert [p.quantity for p in repo.locate(screw)] == [12]
 
 
 def test_fungible_item_holds_a_quantity_per_container(repo, house):
@@ -100,10 +123,10 @@ def test_setting_quantity_to_zero_removes_the_placement(repo, house):
     assert repo.locate(screw) == []
 
 
-def test_move_is_a_rename(repo, house):
+def test_placing_something_already_placed_is_a_rename(repo, house):
     box = repo.mint("item", "Label box", "a box of labels")
     repo.place(box, house["tin"])
-    repo.move(box, house["garage"])
+    repo.place(box, house["garage"])
     assert repo.locate(box)[0].container == house["garage"]
     stat = subprocess.run(
         ["git", "show", "--stat", "-M", "--oneline", "HEAD"],
@@ -112,17 +135,17 @@ def test_move_is_a_rename(repo, house):
     assert "1 file changed, 0 insertions(+), 0 deletions(-)" in stat
 
 
-def test_moving_a_container_carries_its_contents(repo, house):
+def test_replacing_a_container_carries_its_contents(repo, house):
     box = repo.mint("item", "Label box", "a box of labels")
     repo.place(box, house["tin"])
-    repo.move(house["tin"], house["garage"])
+    repo.place(house["tin"], house["garage"])
     assert repo.path_of(box)[-1].id == house["tin"]
     assert repo.path_of(house["tin"])[-1].id == house["garage"]
 
 
-def test_a_container_cannot_be_moved_inside_itself(repo, house):
+def test_a_container_cannot_be_placed_inside_itself(repo, house):
     with pytest.raises(StateError, match="inside itself"):
-        repo.move(house["office"], house["tin"])
+        repo.place(house["office"], house["tin"])
 
 
 def test_check_out_leaves_the_doc_and_drops_the_placement(repo, house):
@@ -194,7 +217,7 @@ def test_every_write_makes_exactly_one_commit(repo, house):
     ).stdout.strip()
     box = repo.mint("item", "Label box", "a box of labels")
     repo.place(box, house["tin"])
-    repo.move(box, house["garage"])
+    repo.place(box, house["garage"])
     repo.check_out(box)
     after = subprocess.run(
         ["git", "rev-list", "--count", "HEAD"],
@@ -265,7 +288,7 @@ def test_checking_out_a_container_names_what_is_inside(repo, house):
 def test_undo_reverses_the_last_action(repo, house):
     box = repo.mint("item", "Label box", "a box of labels")
     repo.place(box, house["tin"])
-    repo.move(box, house["garage"])
+    repo.place(box, house["garage"])
     assert repo.undo() == "move Label box to Garage"
     assert repo.locate(box)[0].container == house["tin"]
 

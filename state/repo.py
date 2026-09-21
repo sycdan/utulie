@@ -240,6 +240,12 @@ class StateRepo:
 
     def place(self, id_: str, container_id: str | None = None,
               quantity: int | None = None) -> None:
+        """Put a thing somewhere. One verb, whatever it was doing before.
+
+        Already somewhere else and not fungible, it moves -- a container takes
+        its contents along. Fungible stock placed somewhere new gains a second
+        placement, because being in two bins at once is the whole point of it.
+        """
         doc = self.doc(id_)
         containers, _ = self.index()
         parent = self.root / TREE
@@ -254,37 +260,37 @@ class StateRepo:
             if quantity <= 0:
                 raise StateError("quantity must be positive; check out instead")
 
+        existing = self.locate(id_)
+        here = [p for p in existing if p.container == container_id]
+        elsewhere = [p for p in existing if p.container != container_id]
+        where = self.doc(container_id).title if container_id else "the tree root"
+
+        if here and doc.fungible and quantity is not None:
+            return self.set_quantity(id_, container_id, quantity)
+        if here:
+            return                                    # already there, nothing to do
+        if elsewhere and not doc.fungible:
+            if len(elsewhere) > 1:
+                raise StateError(f"{id_} is placed {len(elsewhere)} times; "
+                                 "resolve that before moving it")
+            src = self.root / elsewhere[0].path
+            if doc.kind == "container" and parent.is_relative_to(src):
+                raise StateError("a container cannot be moved inside itself")
+            self._git("mv", src.relative_to(self.root).as_posix(),
+                      (parent / doc.name).relative_to(self.root).as_posix())
+            self._commit(f"move {doc.title} to {where}")
+            return
+
         if doc.kind == "container":
             target = parent / doc.name
             target.mkdir(parents=True, exist_ok=True)
             write_lines(target / CONTAINER_MARKER, [f"id: {id_}"])
         else:
-            if not doc.fungible and self.locate(id_):
-                raise StateError(f"{id_} is not fungible and is already placed")
             lines = [f"id: {id_}"]
             if quantity:
                 lines.append(f"quantity: {quantity}")
             write_lines(parent / doc.name, lines)
-
-        where = self.doc(container_id).title if container_id else "the tree root"
         self._commit(f"place {doc.title} in {where}")
-
-    def move(self, id_: str, to_container_id: str | None) -> None:
-        doc = self.doc(id_)
-        src = self._entry_path(id_)
-        if src is None:
-            raise StateError(f"{id_} is not placed exactly once; move is ambiguous")
-        containers, _ = self.index()
-        if to_container_id is not None:
-            dst_dir = self.root / containers[to_container_id]
-        else:
-            dst_dir = self.root / TREE
-        if doc.kind == "container" and dst_dir.is_relative_to(src):
-            raise StateError("a container cannot be moved inside itself")
-        self._git("mv", src.relative_to(self.root).as_posix(),
-                  (dst_dir / doc.name).relative_to(self.root).as_posix())
-        where = self.doc(to_container_id).title if to_container_id else "the tree root"
-        self._commit(f"move {doc.title} to {where}")
 
     def check_out(self, id_: str) -> None:
         doc = self.doc(id_)
