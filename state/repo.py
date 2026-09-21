@@ -17,10 +17,12 @@ where things are.
 
 from __future__ import annotations
 
+import math
 import re
 import subprocess
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -33,6 +35,17 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 # KINGSMetaL field order. Anything else is rejected rather than silently kept.
 FIELD_ORDER = ("kind", "id", "name", "gist", "scopes", "meta", "links")
+
+
+def distance_m(a: dict, b: dict) -> float:
+    """Great-circle metres between two positions. Haversine is plenty: the
+    error against a proper geodesic is centimetres at household range."""
+    r = 6371008.8
+    p1, p2 = math.radians(a["lat"]), math.radians(b["lat"])
+    dp = p2 - p1
+    dl = math.radians(b["lon"] - a["lon"])
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return round(2 * r * math.asin(math.sqrt(h)), 1)
 
 
 def new_id() -> str:
@@ -329,6 +342,40 @@ class StateRepo:
             self._git("mv", src.relative_to(self.root).as_posix(),
                       (src.parent / name).relative_to(self.root).as_posix())
         self._commit(f"rename {old} to {name}")
+
+    def set_position(self, id_: str, lat: float, lon: float) -> None:
+        """Record where a thing was last seen.
+
+        `at` is stored rather than read back out of git: how stale a position
+        is decides how much to trust it, and a blame per item on every scan is
+        not a thing to build a lookup on.
+        """
+        if not -90 <= lat <= 90 or not -180 <= lon <= 180:
+            raise StateError(f"{lat},{lon} is not a coordinate")
+        doc = self.doc(id_)
+        doc.meta = dict(doc.meta)
+        doc.meta["position"] = {
+            "lat": round(lat, 6),      # ~0.1 m; more is false precision
+            "lon": round(lon, 6),
+            "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        self._write_doc(doc)
+        self._commit(f"place {doc.title} at {lat:.5f},{lon:.5f}")
+
+    def position_of(self, id_: str) -> tuple[dict, Doc] | None:
+        """A thing's position, falling back to the container holding it.
+
+        You geotag the bin, not every screw in it. An item with no position of
+        its own is wherever its home container is, and the doc that supplied
+        the answer comes back so a caller can say so.
+        """
+        doc = self.doc(id_)
+        if doc.meta.get("position"):
+            return doc.meta["position"], doc
+        for holder in reversed(self.path_of(id_)):
+            if holder.meta.get("position"):
+                return holder.meta["position"], holder
+        return None
 
     def last_action(self) -> str:
         return self._git("log", "-1", "--format=%s").strip()

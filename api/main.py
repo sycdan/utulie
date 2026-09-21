@@ -14,11 +14,11 @@ import os
 import subprocess
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from state import StateError, StateRepo
+from state import StateError, StateRepo, distance_m
 
 STATE = Path(os.environ.get("UTULIE_STATE", "./state-repo")).resolve()
 
@@ -71,6 +71,11 @@ class Naming(BaseModel):
     name: str = Field(..., description="Lowercase, path-safe. Unique within the kind")
 
 
+class Position(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+
+
 class Quantity(BaseModel):
     container: str
     quantity: int = Field(..., description="0 removes the placement")
@@ -101,8 +106,31 @@ def things():
     ]
 
 
+def _here(from_: str | None) -> dict | None:
+    if not from_:
+        return None
+    try:
+        lat, lon = (float(x) for x in from_.split(","))
+    except ValueError:
+        raise HTTPException(422, "from must look like 'lat,lon'")
+    return {"lat": lat, "lon": lon}
+
+
+def _where(r: StateRepo, id: str, here: dict | None) -> dict:
+    """Position, who supplied it, and how far off it is from `here`."""
+    found = r.position_of(id)
+    if found is None:
+        return {"position": None}
+    pos, source = found
+    out = {"position": pos, "known_from": {"id": source.id, "title": source.title}}
+    if here:
+        out["distance_m"] = distance_m(here, pos)
+    return out
+
+
 @app.get("/things/{id}", summary="One thing: what it is, and where")
-def thing(id: str):
+def thing(id: str, from_: str | None = Query(
+        None, alias="from", description="Your position as 'lat,lon', to get a distance")):
     r = repo()
     doc = guard(r.doc, id)
     return {
@@ -120,21 +148,30 @@ def thing(id: str):
             {"path": p.path, "container": p.container, "quantity": p.quantity}
             for p in r.locate(id)
         ],
+        **_where(r, id, _here(from_)),
     }
 
 
 @app.get("/containers/{id}/contents", summary="What calls this container home")
-def contents(id: str):
+def contents(id: str, from_: str | None = Query(
+        None, alias="from", description="Your position as 'lat,lon'")):
     r = repo()
     guard(r.doc, id)
+    here = _here(from_)
     out = []
     for p in r.contents(id):
         d = r.doc(p.id)
         out.append(
             {"id": d.id, "kind": d.kind, "title": d.title, "gist": d.gist,
-             "quantity": p.quantity}
+             "quantity": p.quantity, **_where(r, d.id, here)}
         )
     return out
+
+
+@app.put("/things/{id}/position", summary="Record where a thing was last seen")
+def set_position(id: str, body: Position):
+    guard(repo().set_position, id, body.lat, body.lon)
+    return {"ok": True}
 
 
 @app.get("/tree", response_class=PlainTextResponse,

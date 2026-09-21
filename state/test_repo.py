@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from .repo import StateError, StateRepo, new_id
+from .repo import StateError, StateRepo, distance_m, new_id
 
 
 @pytest.fixture
@@ -298,3 +298,64 @@ def test_undo_keeps_the_history_rather_than_rewriting_it(repo, house):
 def test_undo_refuses_on_a_fresh_repo(repo):
     with pytest.raises(StateError, match="nothing to undo"):
         repo.undo()
+
+
+GARAGE_POS = (43.653200, -79.383200)
+SHED_POS = (43.653500, -79.383900)      # ~65 m away
+
+
+def test_position_is_recorded_with_when(repo, house):
+    repo.set_position(house["garage"], *GARAGE_POS)
+    pos = repo.doc(house["garage"]).meta["position"]
+    assert (pos["lat"], pos["lon"]) == GARAGE_POS
+    assert pos["at"].endswith("Z")
+
+
+def test_position_rejects_a_non_coordinate(repo, house):
+    with pytest.raises(StateError, match="not a coordinate"):
+        repo.set_position(house["garage"], 91.0, 0.0)
+
+
+def test_an_item_inherits_the_position_of_its_container(repo, house):
+    """You geotag the bin, not every screw in it."""
+    repo.set_position(house["office"], *GARAGE_POS)
+    box = repo.mint("item", "Label box", "a box of labels")
+    repo.place(box, house["tin"])
+    pos, source = repo.position_of(box)
+    assert (pos["lat"], pos["lon"]) == GARAGE_POS
+    assert source.id == house["office"]          # says who supplied the answer
+
+
+def test_a_things_own_position_beats_its_containers(repo, house):
+    repo.set_position(house["office"], *GARAGE_POS)
+    repo.set_position(house["tin"], *SHED_POS)
+    _, source = repo.position_of(house["tin"])
+    assert source.id == house["tin"]
+
+
+def test_nearest_container_wins_over_a_more_distant_ancestor(repo, house):
+    repo.set_position(house["house"], *GARAGE_POS)
+    repo.set_position(house["office"], *SHED_POS)
+    box = repo.mint("item", "Label box", "a box of labels")
+    repo.place(box, house["tin"])
+    _, source = repo.position_of(box)
+    assert source.id == house["office"]
+
+
+def test_position_is_none_when_nothing_up_the_chain_has_one(repo, house):
+    box = repo.mint("item", "Label box", "a box of labels")
+    repo.place(box, house["tin"])
+    assert repo.position_of(box) is None
+
+
+def test_distance_between_two_positions(repo):
+    a = {"lat": GARAGE_POS[0], "lon": GARAGE_POS[1]}
+    b = {"lat": SHED_POS[0], "lon": SHED_POS[1]}
+    assert 60 < distance_m(a, b) < 70
+    assert distance_m(a, a) == 0.0
+
+
+def test_setting_a_position_is_one_commit(repo, house):
+    before = int(repo._git("rev-list", "--count", "HEAD").strip())
+    repo.set_position(house["garage"], *GARAGE_POS)
+    assert int(repo._git("rev-list", "--count", "HEAD").strip()) == before + 1

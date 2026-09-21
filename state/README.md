@@ -74,6 +74,27 @@ put-away flow, which happens in a garage on marginal wifi. It would also mean
 utulie cannot ship without nosedive — the product's runtime depending on the
 dev bridge. The format is what matters, not the binary that produces it.
 
+## Positions
+
+`meta.position` is `{lat, lon, at}` — where the thing was last seen, not where
+it belongs. The tree says where it belongs.
+
+`at` is stored rather than recovered from git: staleness decides how much to
+trust a position, and a `git blame` per item on every scan is not something to
+build a lookup on. Coordinates round to 6 places, about 0.1 m; more is false
+precision from a phone.
+
+**Position is inherited from the nearest container that has one.** You geotag
+the bin, not every screw in it. `position_of()` returns the position *and the
+doc it came from*, so a caller can say "Office, 65 m" rather than implying it
+tracked the screw.
+
+Distance is haversine. At household range the error against a proper geodesic
+is centimetres, well under any phone's GPS error.
+
+Whether a phone can actually tell the garage from the shed is a separate
+question, and belongs to the geolocation spike, not here.
+
 ## Undo
 
 `undo()` reverts the last action as a new commit rather than resetting. The
