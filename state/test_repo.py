@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from .repo import StateError, StateRepo
+from .repo import StateError, StateRepo, new_id
 
 
 @pytest.fixture
@@ -165,7 +165,7 @@ def test_check_is_clean_on_a_healthy_repo(repo, house):
 
 def test_check_reports_a_placement_with_no_kb_doc(repo, house):
     stray = repo.root / ".utulie" / house["house"] / "mystery"
-    stray.write_text("id: 01a0c5ff-0000-7000-8000-000000000000\n", newline="\n")
+    stray.write_text(f"id: {new_id()}\n", newline="\n")
     problems = repo.check()
     assert [p.kind for p in problems] == ["orphan-placement"]
 
@@ -227,3 +227,15 @@ def test_field_order_follows_kingsmetal(repo):
     keys = [ln.split(":")[0] for ln in frontmatter.splitlines()
             if ln and not ln.startswith(" ")]
     assert keys == ["kind", "id", "name", "gist", "meta"]
+
+
+def test_ids_are_uuid7_with_a_decodable_timestamp():
+    """Same format nosedive mint emits, without shelling out to it."""
+    import time
+    import uuid
+    before = int(time.time() * 1000)
+    a, b = new_id(), new_id()
+    assert uuid.UUID(a).version == 7
+    stamp = int(uuid.UUID(a).hex[:12], 16)
+    assert before - 1000 <= stamp <= before + 1000   # leading 48 bits are the ms
+    assert a < b                                      # monotonic, so ids sort by age

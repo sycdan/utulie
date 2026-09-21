@@ -62,6 +62,18 @@ nothing is checked out — the count is 17 and there is no record of where 3
 went. That is the right trade for screws, and it is a stated non-goal rather
 than a gap.
 
+## Ids
+
+`uuid.uuid7()` from the standard library, which is byte-for-byte the format
+`nosedive mint` emits — version 7, leading 48 bits the minting millisecond,
+monotonic so ids sort by age. A test pins that.
+
+Deliberately *not* shelling out to `npx -y nosedive mint`. That would put an
+npm resolution on the path of every mint, and minting is the first step of the
+put-away flow, which happens in a garage on marginal wifi. It would also mean
+utulie cannot ship without nosedive — the product's runtime depending on the
+dev bridge. The format is what matters, not the binary that produces it.
+
 ## Writes
 
 One commit per action. The log is the audit trail, diffs stay legible, and
