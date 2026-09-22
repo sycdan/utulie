@@ -21,8 +21,20 @@ ADD_CARD = """<button id="addBtn" onclick="openAdd()" aria-label="Add">+</button
     </label>
     <input id="addPhoto" class="field" type="file" accept="image/*" capture="environment">
     <div class="row" style="margin-top:.8rem">
-      <button class="primary" onclick="submitAdd()">Save</button>
+      <button id="addSaveBtn" class="primary" onclick="submitAdd()">Save</button>
       <button onclick="closeAdd()">Cancel</button>
+    </div>
+  </div>
+</div>"""
+
+SYNC_CARD = """<div id="syncSheet" class="sheet" onclick="if(event.target===this)closeSync()">
+  <div class="card">
+    <h2>Sync</h2>
+    <p class="muted">Branch: <b id="syncBranch">?</b></p>
+    <p class="muted" id="syncStatusLine">?</p>
+    <div class="row" style="margin-top:.8rem">
+      <button class="primary" onclick="doSync()">Sync now</button>
+      <button onclick="closeSync()">Close</button>
     </div>
   </div>
 </div>"""
@@ -51,7 +63,7 @@ PAGE = """<!doctype html>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body { margin:0; background:var(--bg); color:var(--ink); font:17px/1.45
          -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-         padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+         padding: 0 0 env(safe-area-inset-bottom); }
   main { max-width: 34rem; margin: 0 auto; padding: 1rem 1rem 4rem; }
   .card { background:var(--card); border:1px solid var(--line);
           border-radius:14px; padding:1rem; margin-bottom:.85rem; }
@@ -68,6 +80,7 @@ PAGE = """<!doctype html>
     background:var(--card); color:var(--ink); padding:.7rem .9rem;
     min-height:2.9rem; flex:1 1 auto; }
   button:active { transform: scale(.985); }
+  button:disabled { opacity:.5; }
   .primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   .danger { color:var(--warn); }
   ul { list-style:none; margin:.4rem 0 0; padding:0; }
@@ -83,12 +96,19 @@ PAGE = """<!doctype html>
   #flash.show { transform:none; }
   #flash.bad { background:var(--warn); }
   code { font-size:.82rem; color:var(--dim); word-break:break-all; }
-  #topbar { position:sticky; top:env(safe-area-inset-top); z-index:6; background:var(--bg);
-            padding:.6rem 1rem; margin-bottom:.3rem; border-bottom:1px solid var(--line);
-            overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling:touch; }
-  #topbar a { color:var(--accent); text-decoration:none; font-weight:600; }
-  #topbar h1 { display:inline; font-size:1.05rem; font-weight:700; margin:0;
-               color:var(--ink); }
+  #topbar { position:sticky; top:0; z-index:6; background:var(--bg);
+            padding:calc(.6rem + env(safe-area-inset-top)) 1rem .6rem;
+            margin-bottom:.3rem; border-bottom:1px solid var(--line);
+            display:flex; align-items:center; gap:.5rem; }
+  #crumbScroll { flex:1 1 auto; min-width:0; overflow-x:auto; white-space:nowrap;
+                 -webkit-overflow-scrolling:touch; }
+  #crumbScroll a { color:var(--accent); text-decoration:none; font-weight:600; }
+  #crumbScroll h1 { display:inline; font-size:1.05rem; font-weight:700; margin:0;
+                     color:var(--ink); }
+  #syncBtn { flex:0 0 auto; background:none; border:none; padding:0; min-height:auto;
+             display:flex; align-items:center; gap:.2rem; color:var(--dim);
+             font-size:1.15rem; }
+  #syncBtn .count { font-size:.7rem; font-weight:700; color:var(--warn); }
   .photoBox { position:relative; aspect-ratio:4/3; border-radius:14px; overflow:hidden;
               margin-bottom:.85rem; background:var(--card); border:1px solid var(--line); }
   .photoBox img { width:100%; height:100%; object-fit:cover; display:none; }
@@ -111,10 +131,16 @@ PAGE = """<!doctype html>
 </style>
 </head>
 <body>
-__TOPBAR__
+<nav id="topbar" aria-label="Breadcrumb">
+  <div id="crumbScroll">__CRUMBTRAIL__</div>
+  <button id="syncBtn" onclick="openSync()" aria-label="Sync status">
+    ☁<span class="count" id="syncCount"></span>
+  </button>
+</nav>
 <main>__BODY__</main>
 <div id="flash"></div>
 __ADD_CARD__
+__SYNC_CARD__
 <script>
 const ID = "__ID__";
 let head = "__HEAD__";
@@ -157,37 +183,88 @@ async function downscale(file, maxDim, quality) {
   return new Promise(res => canvas.toBlob(res, "image/jpeg", quality));
 }
 
+let addSubmitting = false;
+
 async function submitAdd() {
-  if (ADD_ALLOW_ITEM && !addKind) return flash("Pick item or container", true);
-  const title = document.getElementById("addTitle").value.trim();
-  if (!title) return flash("Enter a title", true);
-  const fungible = addKind === "item" && document.getElementById("addFungible").checked;
-  const minted = await post("/things", { kind: addKind, title, gist: "", fungible });
-  if (!minted) return;
-  // ADD_HOME is "" for the tree root (a real, meaningful value -- place with
-  // container: null), or an id; only null itself (button hidden) skips this.
-  if (ADD_HOME !== null) {
-    if (!(await post(`/things/${minted.id}/place`, { container: ADD_HOME || null }))) return;
+  if (addSubmitting) return;   // a double-tap must not mint twice
+  addSubmitting = true;
+  const saveBtn = document.getElementById("addSaveBtn");
+  saveBtn.disabled = true;
+  try {
+    if (ADD_ALLOW_ITEM && !addKind) return flash("Pick item or container", true);
+    const title = document.getElementById("addTitle").value.trim();
+    if (!title) return flash("Enter a title", true);
+    const fungible = addKind === "item" && document.getElementById("addFungible").checked;
+    const minted = await post("/things", { kind: addKind, title, gist: "", fungible });
+    if (!minted) return;
+    // ADD_HOME is "" for the tree root (a real, meaningful value -- place
+    // with container: null), or an id; only null (button hidden) skips this.
+    if (ADD_HOME !== null) {
+      if (!(await post(`/things/${minted.id}/place`, { container: ADD_HOME || null }))) return;
+    }
+    const file = document.getElementById("addPhoto").files[0];
+    if (file) {
+      const blob = await downscale(file, 1600, 0.82);
+      const fd = new FormData();
+      fd.append("file", blob, "photo.jpg");
+      fd.append("expect", head);
+      const r = await fetch(`/things/${minted.id}/photo`, { method: "POST", body: fd });
+      if (!r.ok) { flash("Minted, but the photo failed to attach", true);
+                   setTimeout(() => location.href = `/m/${minted.id}`, 1500); return; }
+    }
+    location.href = `/m/${minted.id}`;
+  } finally {
+    addSubmitting = false;
+    saveBtn.disabled = false;
   }
-  const file = document.getElementById("addPhoto").files[0];
-  if (file) {
-    const blob = await downscale(file, 1600, 0.82);
-    const fd = new FormData();
-    fd.append("file", blob, "photo.jpg");
-    fd.append("expect", head);
-    const r = await fetch(`/things/${minted.id}/photo`, { method: "POST", body: fd });
-    if (!r.ok) { flash("Minted, but the photo failed to attach", true);
-                 setTimeout(() => location.href = `/m/${minted.id}`, 1500); return; }
-  }
-  location.href = `/m/${minted.id}`;
 }
 
 // Scroll the breadcrumb trail to its end so a long chain shows the current
 // item, not "Home", without the pilot having to scroll it themselves.
 (function scrollCrumbsToEnd() {
-  const tb = document.getElementById("topbar");
-  if (tb) tb.scrollLeft = tb.scrollWidth;
+  const cs = document.getElementById("crumbScroll");
+  if (cs) cs.scrollLeft = cs.scrollWidth;
 })();
+
+let syncStatus = null;
+
+async function refreshSyncStatus() {
+  try {
+    const r = await fetch("/sync/status");
+    syncStatus = await r.json();
+    const el = document.getElementById("syncCount");
+    // No upstream is a distinct, riskier state than "0 ahead" -- there is
+    // nothing to compare against, so real commits could be sitting
+    // unpushed with no way to detect it. Never render that as blank/clean.
+    if (!syncStatus.upstream) el.textContent = "!";
+    else el.textContent = syncStatus.ahead > 0 ? syncStatus.ahead : "";
+  } catch (e) { /* offline or state repo not ready -- leave the badge blank */ }
+}
+refreshSyncStatus();
+
+function openSync() {
+  document.getElementById("syncBranch").textContent = syncStatus ? syncStatus.branch : "?";
+  const line = document.getElementById("syncStatusLine");
+  if (!syncStatus) line.textContent = "?";
+  else if (!syncStatus.upstream) line.textContent = "Never pushed -- no remote branch to compare against.";
+  else if (syncStatus.ahead > 0) line.textContent = `${syncStatus.ahead} commit(s) not yet pushed`;
+  else line.textContent = "Up to date.";
+  document.getElementById("syncSheet").className = "sheet show";
+}
+
+function closeSync() {
+  document.getElementById("syncSheet").className = "sheet";
+}
+
+async function doSync() {
+  const r = await fetch("/sync", { method: "POST", headers: {"content-type": "application/json"},
+                                    body: "{}" });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return flash(d.detail || "Sync failed", true);
+  flash("Synced");
+  closeSync();
+  refreshSyncStatus();
+}
 
 async function updatePhoto() {
   const file = document.getElementById("photoInput").files[0];
@@ -229,6 +306,12 @@ async function post(path, body) {
 async function checkOut() {
   if (!confirm("Check this out of its container?")) return;
   if (await post(`/things/${ID}/check-out?expect=${head}`)) location.reload();
+}
+
+async function deleteThing() {
+  if (!confirm("Delete this for good? Can't be undone -- for a real thing you "
+               + "just want out of a container, use Check out instead.")) return;
+  if (await act(`/things/${ID}?expect=${head}`, { method: "DELETE" })) location.href = "/m";
 }
 
 async function moveTo(sel) {
@@ -277,21 +360,21 @@ function markHere() {
 
 def render(title: str, body: str, id_: str = "", head: str = "",
            add_home: str | None = None, add_allow_item: bool = False,
-           crumbtrail: str | None = None) -> str:
+           crumbtrail: str = "") -> str:
     """add_home is the container a new thing should land in: an id, "" for
     the tree root, or None to hide the add button entirely (an unknown-thing
     page, or an item's own page, where "add inside this" makes no sense).
 
     crumbtrail is pre-built header HTML: ancestor links plus the current
     thing as a trailing bold, non-link segment -- doubles as the page's
-    title, since a big duplicate <h1> right below it added nothing. None
-    hides the header entirely (the /m root itself, the top of the
-    hierarchy, has nothing above it to show)."""
-    topbar = (f'<nav id="topbar" aria-label="Breadcrumb">{crumbtrail}</nav>'
-              if crumbtrail else "")
+    title, since a big duplicate <h1> right below it added nothing. Empty on
+    the /m root itself, the top of the hierarchy, which has nothing above it
+    to show -- the header (and its sync button) still renders, just with an
+    empty crumb area."""
     return (PAGE.replace("__TITLE__", esc(title)).replace("__BODY__", body)
                 .replace("__ID__", id_).replace("__HEAD__", head)
-                .replace("__ADD_CARD__", ADD_CARD).replace("__TOPBAR__", topbar)
+                .replace("__ADD_CARD__", ADD_CARD).replace("__SYNC_CARD__", SYNC_CARD)
+                .replace("__CRUMBTRAIL__", crumbtrail)
                 .replace("__ADD_HOME__", "null" if add_home is None else f'"{esc(add_home)}"')
                 .replace("__ADD_ALLOW_ITEM__", "true" if add_allow_item else "false"))
 

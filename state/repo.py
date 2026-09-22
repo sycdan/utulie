@@ -145,6 +145,22 @@ class StateRepo:
         except StateError:
             return ""
 
+    def sync_status(self) -> dict:
+        """Current branch, and how many local commits sit ahead of its
+        upstream. A branch with no upstream (a fresh dev clone that has
+        never pushed, or the lone commit `init()` makes) reads as 0 ahead,
+        not an error -- there is nothing to compare against yet, which is a
+        normal resting state, not a problem."""
+        branch = self._git("rev-parse", "--abbrev-ref", "HEAD").strip()
+        upstream = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            cwd=self.root, capture_output=True, text=True,
+        )
+        if upstream.returncode:
+            return {"branch": branch, "upstream": None, "ahead": 0}
+        ahead = self._git("rev-list", "--count", "@{u}..HEAD").strip()
+        return {"branch": branch, "upstream": upstream.stdout.strip(), "ahead": int(ahead)}
+
     def _expect(self, expect: str | None) -> None:
         if expect is None:
             return
@@ -158,6 +174,7 @@ class StateRepo:
         if not (self.root / ".git").exists():
             self._git("init", "-q", ".")
         self._ensure_git_identity()
+        (self.root / KB / ".gitkeep").touch()
         (self.root / TREE / ".gitkeep").touch()
         self._commit("initialise state repo")
 
@@ -406,6 +423,13 @@ class StateRepo:
         for placement in self.locate(id_):
             self._git("rm", "-r", "-q", placement.path)
         self._git("rm", "-q", f"{KB}/{id_}.md")
+        # git prunes a directory once its last tracked file is gone -- deleting
+        # the last kb doc would delete kb/ itself, and every read after that
+        # 503s on "no state repo" (repo() checks kb/ exists). A repo made
+        # before this fix has no kb/.gitkeep from init() to prevent it, so
+        # heal it here too, not just at init time.
+        (self.root / KB).mkdir(parents=True, exist_ok=True)
+        (self.root / KB / ".gitkeep").touch()
         self._commit(f"delete {doc.title} ({id_})")
 
     def set_quantity(self, id_: str, container_id: str, quantity: int,
