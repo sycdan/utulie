@@ -309,7 +309,7 @@ async function checkOut() {
 }
 
 async function printThing(btn, media) {
-  const text = prompt("Caption to print next to the QR (optional -- blank uses the quid):", "");
+  const text = prompt("Caption to print next to the QR (blank uses the quid):", btn.dataset.title || "");
   if (text === null) return;
   btn.disabled = true;
   try {

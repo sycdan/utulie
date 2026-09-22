@@ -573,7 +573,13 @@ def phone_thing(id: str):
   </div>
   {qty_row}
   <div class="row" style="margin-top:.5rem">
-    <button onclick="printThing(this, '{'container-40x70' if doc.kind == 'container' else 'item-50x30'}')">🖨️ Print label</button>
+    <select id="printMedia">
+      <option value="item-50x30" {"selected" if doc.kind != "container" else ""}>Item (50×30)</option>
+      <option value="container-40x70" {"selected" if doc.kind == "container" else ""}>Big bin (40×70)</option>
+      <option value="container-50x50-round">Round (50×50)</option>
+    </select>
+    <button data-title="{esc(doc.title)}"
+            onclick="printThing(this, document.getElementById('printMedia').value)">🖨️ Print label</button>
     {'<button class="danger" onclick="checkOut()">Check out</button>' if placements else ''}
     <button class="danger" onclick="deleteThing()">Delete</button>
   </div>
