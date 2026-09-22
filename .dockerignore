@@ -1,0 +1,11 @@
+printer/
+*.md
+!api/**/*.md
+.git
+.gitignore
+.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+.venv
+state-repo/

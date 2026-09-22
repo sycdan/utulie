@@ -113,6 +113,14 @@ class Quantity(BaseModel):
 
 
 # -- read --------------------------------------------------------------
+@app.get("/health", include_in_schema=False)
+def health():
+    """Container healthcheck and ingress liveness probe. Deliberately does not
+    touch the state repo -- a broken UTULIE_STATE should not read as the
+    process being down; that is what /check is for."""
+    return {"ok": True}
+
+
 @app.get("/", include_in_schema=False)
 def root():
     return RedirectResponse("/m")
@@ -327,7 +335,16 @@ def undo(expect: str | None = Query(None, description="Head you read")):
 def sync(remote: str = Body("origin", embed=True)):
     env = dict(os.environ)
     if key := os.environ.get("UTULIE_SSH_KEY"):
-        env["GIT_SSH_COMMAND"] = f"ssh -i {key} -o IdentitiesOnly=yes"
+        # A bind-mounted secret carries whatever permissions the host
+        # filesystem gives it -- on an NTFS source (Docker Desktop on
+        # Windows) that is always wide open, and OpenSSH's client refuses to
+        # load a private key with open permissions. There is no client-side
+        # override for that refusal; the fix is a real chmod, which has to
+        # happen on the container's own filesystem, not the host mount.
+        local_key = Path("/tmp/utulie-deploy-key")
+        local_key.write_bytes(Path(key).read_bytes())
+        local_key.chmod(0o600)
+        env["GIT_SSH_COMMAND"] = f"ssh -i {local_key} -o IdentitiesOnly=yes"
     out = subprocess.run(
         ["git", "push", remote, "HEAD"], cwd=STATE, capture_output=True,
         text=True, env=env,
