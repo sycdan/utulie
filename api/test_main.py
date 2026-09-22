@@ -37,3 +37,61 @@ def test_delete_route_erases_a_thing(client):
     assert resp.json()["ok"] is True
 
     assert client.get(f"/things/{id_}").status_code == 400
+
+
+@pytest.fixture
+def client_with_remote(client, tmp_path):
+    """`client`'s state repo pushed to a bare remote -- siblings of tmp_path,
+    never inside it, or a real state doc could mistake it for repo content."""
+    bare = tmp_path.parent / "bare.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)])
+    subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=tmp_path)
+    branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                             cwd=tmp_path, capture_output=True, text=True).stdout.strip()
+    subprocess.run(["git", "push", "-u", "origin", branch], cwd=tmp_path,
+                    capture_output=True, text=True)
+    return client, bare, branch
+
+
+def test_sync_pulls_a_fast_forward_then_pushes(client_with_remote, tmp_path):
+    client, bare, branch = client_with_remote
+
+    # A second clone, standing in for a different writer to the same remote --
+    # the exact scenario that left htpc's production clone stale for real.
+    other = tmp_path.parent / "other"
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)])
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=other)
+    subprocess.run(["git", "config", "user.name", "Other"], cwd=other)
+    (other / "kb" / "note.txt").write_text("from elsewhere")
+    subprocess.run(["git", "add", "-A"], cwd=other)
+    subprocess.run(["git", "commit", "-q", "-m", "from elsewhere"], cwd=other)
+    subprocess.run(["git", "push", "-q", "origin", branch], cwd=other)
+
+    resp = client.post("/sync")
+    assert resp.status_code == 200, resp.text
+    assert (tmp_path / "kb" / "note.txt").read_text() == "from elsewhere"
+
+
+def test_sync_refuses_a_real_divergence(client_with_remote, tmp_path):
+    client, bare, branch = client_with_remote
+
+    other = tmp_path.parent / "other"
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)])
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=other)
+    subprocess.run(["git", "config", "user.name", "Other"], cwd=other)
+    (other / "kb" / "note.txt").write_text("from elsewhere")
+    subprocess.run(["git", "add", "-A"], cwd=other)
+    subprocess.run(["git", "commit", "-q", "-m", "from elsewhere"], cwd=other)
+    subprocess.run(["git", "push", "-q", "origin", branch], cwd=other)
+
+    # Local also moves, independently -- a true two-way divergence, not
+    # just "behind."
+    client.post("/things", json={"kind": "item", "title": "Local", "gist": "g"})
+
+    resp = client.post("/sync")
+    assert resp.status_code == 409
+    assert "diverged" in resp.json()["detail"]
+    # Refused cleanly -- no half-finished merge left on disk.
+    status = subprocess.run(["git", "status", "--short"], cwd=tmp_path,
+                             capture_output=True, text=True).stdout
+    assert "UU" not in status and "AA" not in status

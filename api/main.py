@@ -371,7 +371,7 @@ def sync_status():
     return repo().sync_status()
 
 
-@app.post("/sync", summary="Push the state repo to its remote")
+@app.post("/sync", summary="Pull (fast-forward only), then push the state repo to its remote")
 def sync(remote: str = Body("origin", embed=True)):
     env = dict(os.environ)
     if key := os.environ.get("UTULIE_SSH_KEY"):
@@ -385,6 +385,25 @@ def sync(remote: str = Body("origin", embed=True)):
         local_key.write_bytes(Path(key).read_bytes())
         local_key.chmod(0o600)
         env["GIT_SSH_COMMAND"] = f"ssh -i {local_key} -o IdentitiesOnly=yes"
+
+    # Sync only ever pushed, so a clone that never runs the app's own mints --
+    # production is not the only writer to a branch once a dev clone targets
+    # the same remote -- goes stale until someone notices and pulls by hand.
+    # Found live: htpc's own clone sat 4 commits behind after a rebase pushed
+    # from elsewhere, and a real container's contents were invisible until a
+    # manual fast-forward. Pull first, ff-only -- a real divergence needs a
+    # human to resolve, not a silent rebase from a button tap.
+    branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                             cwd=STATE, capture_output=True, text=True).stdout.strip()
+    fetch = subprocess.run(["git", "fetch", remote, branch], cwd=STATE,
+                            capture_output=True, text=True, env=env)
+    if fetch.returncode == 0:
+        pull = subprocess.run(["git", "merge", "--ff-only", "FETCH_HEAD"], cwd=STATE,
+                               capture_output=True, text=True, env=env)
+        if pull.returncode:
+            raise HTTPException(
+                409, f"remote has diverged -- pull/rebase manually first: {pull.stderr.strip()}")
+
     out = subprocess.run(
         # -u: a branch pushed for the first time (a fresh dev clone's branch,
         # for instance) needs upstream tracking set, or sync_status can never
