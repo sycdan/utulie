@@ -157,8 +157,22 @@ class StateRepo:
         (self.root / TREE).mkdir(parents=True, exist_ok=True)
         if not (self.root / ".git").exists():
             self._git("init", "-q", ".")
+        self._ensure_git_identity()
         (self.root / TREE / ".gitkeep").touch()
         self._commit("initialise state repo")
+
+    def _ensure_git_identity(self) -> None:
+        """A fallback identity, only if none is already configured (local or
+        global) -- init() makes a commit, and a runner with no git config at
+        all (a fresh CI box, a fresh container without the Dockerfile's
+        system-level config) fails that commit with no identity to attribute
+        it to. Never overrides a real identity a caller already set."""
+        have = subprocess.run(
+            ["git", "config", "user.email"], cwd=self.root, capture_output=True
+        ).returncode == 0
+        if not have:
+            self._git("config", "user.email", "utulie@localhost")
+            self._git("config", "user.name", "utulie")
 
     # -- kb docs --------------------------------------------------------
     def _doc_path(self, id_: str) -> Path:
