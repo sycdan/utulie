@@ -513,3 +513,54 @@ def test_placing_zero_on_a_fresh_fungible_placement_is_still_refused(repo, house
     screw = repo.mint("item", "M4 screw", "stainless", fungible=True)
     with pytest.raises(StateError, match="check out instead"):
         repo.place(screw, house["tin"], quantity=0)
+
+
+def test_deleting_the_last_kb_doc_leaves_kb_usable(repo, house):
+    """git prunes a directory once its last tracked file is gone. Deleting
+    the only doc must not take kb/ down with it -- a subsequent mint has to
+    still work.
+
+    init()'s own kb/.gitkeep already guards a freshly-initialised repo, so
+    that alone would pass even without delete()'s self-heal. Remove it here
+    to stand in for a repo created before that fix -- the case delete()'s
+    self-heal exists for -- so this test actually exercises delete()'s own
+    responsibility, not init()'s."""
+    (repo.root / "kb" / ".gitkeep").unlink()
+    repo._commit("simulate a pre-fix repo with no kb/.gitkeep")
+    for id_ in ["tin", "office", "garage", "house"]:  # children before parents
+        repo.delete(house[id_])
+    assert (repo.root / "kb").is_dir()
+    survivor = repo.mint("container", "Shed", "minted after the purge")
+    assert survivor in repo.docs()
+
+
+def test_sync_status_with_no_upstream(repo):
+    """A fresh repo (or a dev clone never pushed with -u) has no upstream
+    at all -- distinct from an upstream that is 0 commits ahead."""
+    status = repo.sync_status()
+    assert status["upstream"] is None
+    assert status["ahead"] == 0
+    assert status["branch"] == repo._git("rev-parse", "--abbrev-ref", "HEAD").strip()
+
+
+def test_sync_status_zero_ahead_of_a_real_upstream(repo, tmp_path):
+    bare = tmp_path / "_bare.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)])
+    subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=repo.root)
+    branch = repo._git("rev-parse", "--abbrev-ref", "HEAD").strip()
+    subprocess.run(["git", "push", "-u", "origin", branch], cwd=repo.root,
+                    capture_output=True, text=True)
+    status = repo.sync_status()
+    assert status["upstream"] is not None
+    assert status["ahead"] == 0
+
+
+def test_sync_status_counts_commits_ahead(repo, tmp_path, house):
+    bare = tmp_path / "_bare.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)])
+    subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=repo.root)
+    branch = repo._git("rev-parse", "--abbrev-ref", "HEAD").strip()
+    subprocess.run(["git", "push", "-u", "origin", branch], cwd=repo.root,
+                    capture_output=True, text=True)
+    repo.mint("item", "Unsynced thing", "made after the push")
+    assert repo.sync_status()["ahead"] == 1
