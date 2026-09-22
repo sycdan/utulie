@@ -37,7 +37,10 @@ app = FastAPI(
 )
 
 
-KIND_ICON = {"item": "🏷️", "container": "📦"}
+def thing_icon(kind: str, fungible: bool) -> str:
+    if kind == "container":
+        return "📦"
+    return "🔢" if fungible else "🏷️"
 
 
 def repo() -> StateRepo:
@@ -360,6 +363,11 @@ def undo(expect: str | None = Query(None, description="Head you read")):
     return {"undone": guard(r.undo, expect=expect), "head": r.head()}
 
 
+@app.get("/sync/status", summary="Current branch and how far ahead of its upstream")
+def sync_status():
+    return repo().sync_status()
+
+
 @app.post("/sync", summary="Push the state repo to its remote")
 def sync(remote: str = Body("origin", embed=True)):
     env = dict(os.environ)
@@ -375,7 +383,11 @@ def sync(remote: str = Body("origin", embed=True)):
         local_key.chmod(0o600)
         env["GIT_SSH_COMMAND"] = f"ssh -i {local_key} -o IdentitiesOnly=yes"
     out = subprocess.run(
-        ["git", "push", remote, "HEAD"], cwd=STATE, capture_output=True,
+        # -u: a branch pushed for the first time (a fresh dev clone's branch,
+        # for instance) needs upstream tracking set, or sync_status can never
+        # tell "0 ahead" from "no remote to compare against at all" -- the
+        # exact confusion that surfaced testing this live.
+        ["git", "push", "-u", remote, "HEAD"], cwd=STATE, capture_output=True,
         text=True, env=env,
     )
     if out.returncode:
@@ -460,9 +472,14 @@ def phone_thing(id: str):
         for c in r.index()[0] if c != id
     )
     if doc.kind == "container":
+        def _kid_row(p):
+            d = r.doc(p.id)
+            icon = thing_icon(d.kind, d.fungible)
+            qty = p.quantity if p.quantity else ""
+            return (f'<li><a href="/m/{p.id}"><span>{icon} {esc(d.title)}</span>'
+                    f'<span class="qty">{qty}</span></a></li>')
         kids = "".join(
-            f'<li><a href="/m/{p.id}"><span>{esc(r.doc(p.id).title)}</span>'
-            f'<span class="qty">{p.quantity if p.quantity else ""}</span></a></li>'
+            _kid_row(p)
             for p in sorted(r.contents(id), key=lambda p: r.doc(p.id).title.lower())
         )
         inside = (f'<div class="card"><h2>Contains</h2><ul>{kids}</ul></div>'
@@ -504,14 +521,16 @@ def phone_thing(id: str):
     </select>
   </div>
   {qty_row}
-  {'<div class="row" style="margin-top:.5rem"><button class="danger" '
-   'onclick="checkOut()">Check out</button></div>' if placements else ''}
+  <div class="row" style="margin-top:.5rem">
+    {'<button class="danger" onclick="checkOut()">Check out</button>' if placements else ''}
+    <button class="danger" onclick="deleteThing()">Delete</button>
+  </div>
   <p style="margin:.9rem 0 0"><code>{esc(id)}</code></p>
 </div>
 """
     add_home = id if doc.kind == "container" else None
     ancestors = "".join(f'<a href="/m/{c.id}">{esc(c.title)}</a> › ' for c in chain)
-    icon = KIND_ICON.get(doc.kind, "")
+    icon = thing_icon(doc.kind, doc.fungible)
     crumbtrail = f'<a href="/m">Home</a> › {ancestors}<h1>{icon} {esc(doc.title)}</h1>'
     return HTMLResponse(render(doc.title, body, id, r.head(),
                                 add_home=add_home, add_allow_item=True,
