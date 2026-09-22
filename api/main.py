@@ -137,6 +137,15 @@ def dev_ca():
     return Response(Path(ca).read_bytes(), media_type="application/x-x509-ca-cert")
 
 
+@app.get("/icon.png", include_in_schema=False)
+def app_icon():
+    """Home-screen icon for Add to Home Screen -- without this iOS falls back
+    to rendering a giant first letter of the page title on a solid
+    background."""
+    icon = Path(__file__).parent / "static" / "icon-180.png"
+    return Response(icon.read_bytes(), media_type="image/png")
+
+
 @app.get("/things", summary="Every thing that has an identity")
 def things():
     r = repo()
