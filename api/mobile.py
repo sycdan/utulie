@@ -7,14 +7,35 @@ thing this has to do is be there when it arrives.
 
 from __future__ import annotations
 
+ADD_CARD = """<button id="addBtn" onclick="openAdd()" aria-label="Add">+</button>
+<div id="addSheet" class="sheet" onclick="if(event.target===this)closeAdd()">
+  <div class="card">
+    <h2>Add</h2>
+    <div class="row" id="addKindRow">
+      <button id="kindItemBtn" onclick="pickKind('item')">Item</button>
+      <button id="kindContainerBtn" onclick="pickKind('container')">Container</button>
+    </div>
+    <input id="addTitle" class="field" placeholder="Title">
+    <label class="row" id="addFungibleRow" style="display:none">
+      <input type="checkbox" id="addFungible"> Stacking stock (fungible)
+    </label>
+    <input id="addPhoto" class="field" type="file" accept="image/*" capture="environment">
+    <div class="row" style="margin-top:.8rem">
+      <button class="primary" onclick="submitAdd()">Save</button>
+      <button onclick="closeAdd()">Cancel</button>
+    </div>
+  </div>
+</div>"""
+
 PAGE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#111418">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <link rel="apple-touch-icon" href="/icon.png">
 <title>__TITLE__ · utulie</title>
 <style>
@@ -35,15 +56,14 @@ PAGE = """<!doctype html>
   .card { background:var(--card); border:1px solid var(--line);
           border-radius:14px; padding:1rem; margin-bottom:.85rem; }
   h1 { font-size:1.55rem; margin:.1rem 0 .3rem; line-height:1.2; }
+  h2 { font-size:1.05rem; margin:.1rem 0 .3rem; line-height:1.2; font-weight:650; }
   .gist { color:var(--dim); margin:0 0 .2rem; }
   .kind { display:inline-block; font-size:.72rem; letter-spacing:.08em;
           text-transform:uppercase; color:var(--dim); border:1px solid var(--line);
           border-radius:999px; padding:.1rem .55rem; }
-  .crumbs { color:var(--dim); font-size:.95rem; }
-  .crumbs a { color:var(--accent); text-decoration:none; }
   .big { font-size:1.9rem; font-weight:650; }
   .row { display:flex; gap:.5rem; flex-wrap:wrap; }
-  button, select, .btn {
+  button, select, input:not([type="checkbox"]), .btn {
     font: inherit; border-radius:11px; border:1px solid var(--line);
     background:var(--card); color:var(--ink); padding:.7rem .9rem;
     min-height:2.9rem; flex:1 1 auto; }
@@ -59,18 +79,127 @@ PAGE = """<!doctype html>
   .muted { color:var(--dim); font-size:.9rem; }
   #flash { position:fixed; left:0; right:0; bottom:0; padding:.85rem 1rem;
            background:var(--accent); color:#fff; transform:translateY(100%);
-           transition:transform .18s; }
+           transition:transform .18s; z-index:20; }
   #flash.show { transform:none; }
   #flash.bad { background:var(--warn); }
   code { font-size:.82rem; color:var(--dim); word-break:break-all; }
+  #topbar { position:sticky; top:env(safe-area-inset-top); z-index:6; background:var(--bg);
+            padding:.6rem 1rem; margin-bottom:.3rem; border-bottom:1px solid var(--line);
+            overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling:touch; }
+  #topbar a { color:var(--accent); text-decoration:none; font-weight:600; }
+  #topbar h1 { display:inline; font-size:1.05rem; font-weight:700; margin:0;
+               color:var(--ink); }
+  .photoBox { position:relative; aspect-ratio:4/3; border-radius:14px; overflow:hidden;
+              margin-bottom:.85rem; background:var(--card); border:1px solid var(--line); }
+  .photoBox img { width:100%; height:100%; object-fit:cover; display:none; }
+  .photoPh { position:absolute; inset:0; display:flex; align-items:center;
+             justify-content:center; color:var(--dim); font-size:.95rem;
+             text-align:center; padding:1rem; }
+  .photoBadge { position:absolute; right:.5rem; bottom:.5rem; width:2.1rem;
+                height:2.1rem; border-radius:999px; background:rgba(0,0,0,.55);
+                color:#fff; display:flex; align-items:center; justify-content:center;
+                font-size:1.05rem; pointer-events:none; }
+  #addBtn { position:fixed; right:1rem; bottom:calc(1rem + env(safe-area-inset-bottom));
+            width:3.4rem; height:3.4rem; border-radius:999px; background:var(--accent);
+            color:#fff; font-size:1.7rem; line-height:1; border:none;
+            box-shadow:0 2px 10px rgba(0,0,0,.3); z-index:5; }
+  .sheet { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:10; }
+  .sheet.show { display:flex; align-items:flex-end; }
+  .sheet .card { width:100%; margin:0; border-radius:16px 16px 0 0;
+                 padding-bottom:calc(1rem + env(safe-area-inset-bottom)); }
+  .field { width:100%; margin-top:.6rem; }
 </style>
 </head>
 <body>
+__TOPBAR__
 <main>__BODY__</main>
 <div id="flash"></div>
+__ADD_CARD__
 <script>
 const ID = "__ID__";
 let head = "__HEAD__";
+const ADD_HOME = __ADD_HOME__;
+const ADD_ALLOW_ITEM = __ADD_ALLOW_ITEM__;
+if (ADD_HOME === null) document.getElementById("addBtn").style.display = "none";
+
+let addKind = ADD_ALLOW_ITEM ? null : "container";
+
+function openAdd() {
+  document.getElementById("addKindRow").style.display = ADD_ALLOW_ITEM ? "flex" : "none";
+  document.getElementById("addSheet").className = "sheet show";
+}
+
+function closeAdd() {
+  document.getElementById("addSheet").className = "sheet";
+  document.getElementById("addTitle").value = "";
+  document.getElementById("addPhoto").value = "";
+  document.getElementById("addFungible").checked = false;
+  addKind = ADD_ALLOW_ITEM ? null : "container";
+  document.getElementById("addFungibleRow").style.display = "none";
+  document.getElementById("kindItemBtn").className = "";
+  document.getElementById("kindContainerBtn").className = "";
+}
+
+function pickKind(k) {
+  addKind = k;
+  document.getElementById("kindItemBtn").className = k === "item" ? "primary" : "";
+  document.getElementById("kindContainerBtn").className = k === "container" ? "primary" : "";
+  document.getElementById("addFungibleRow").style.display = k === "item" ? "flex" : "none";
+}
+
+async function downscale(file, maxDim, quality) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, w, h);
+  return new Promise(res => canvas.toBlob(res, "image/jpeg", quality));
+}
+
+async function submitAdd() {
+  if (ADD_ALLOW_ITEM && !addKind) return flash("Pick item or container", true);
+  const title = document.getElementById("addTitle").value.trim();
+  if (!title) return flash("Enter a title", true);
+  const fungible = addKind === "item" && document.getElementById("addFungible").checked;
+  const minted = await post("/things", { kind: addKind, title, gist: "", fungible });
+  if (!minted) return;
+  // ADD_HOME is "" for the tree root (a real, meaningful value -- place with
+  // container: null), or an id; only null itself (button hidden) skips this.
+  if (ADD_HOME !== null) {
+    if (!(await post(`/things/${minted.id}/place`, { container: ADD_HOME || null }))) return;
+  }
+  const file = document.getElementById("addPhoto").files[0];
+  if (file) {
+    const blob = await downscale(file, 1600, 0.82);
+    const fd = new FormData();
+    fd.append("file", blob, "photo.jpg");
+    fd.append("expect", head);
+    const r = await fetch(`/things/${minted.id}/photo`, { method: "POST", body: fd });
+    if (!r.ok) { flash("Minted, but the photo failed to attach", true);
+                 setTimeout(() => location.href = `/m/${minted.id}`, 1500); return; }
+  }
+  location.href = `/m/${minted.id}`;
+}
+
+// Scroll the breadcrumb trail to its end so a long chain shows the current
+// item, not "Home", without the pilot having to scroll it themselves.
+(function scrollCrumbsToEnd() {
+  const tb = document.getElementById("topbar");
+  if (tb) tb.scrollLeft = tb.scrollWidth;
+})();
+
+async function updatePhoto() {
+  const file = document.getElementById("photoInput").files[0];
+  if (!file) return;
+  const blob = await downscale(file, 1600, 0.82);
+  const fd = new FormData();
+  fd.append("file", blob, "photo.jpg");
+  fd.append("expect", head);
+  const r = await fetch(`/things/${ID}/photo`, { method: "POST", body: fd });
+  if (!r.ok) return flash("Photo upload failed", true);
+  location.reload();
+}
 
 function flash(msg, bad) {
   const f = document.getElementById("flash");
@@ -146,9 +275,25 @@ function markHere() {
 """
 
 
-def render(title: str, body: str, id_: str = "", head: str = "") -> str:
-    return (PAGE.replace("__TITLE__", title).replace("__BODY__", body)
-                .replace("__ID__", id_).replace("__HEAD__", head))
+def render(title: str, body: str, id_: str = "", head: str = "",
+           add_home: str | None = None, add_allow_item: bool = False,
+           crumbtrail: str | None = None) -> str:
+    """add_home is the container a new thing should land in: an id, "" for
+    the tree root, or None to hide the add button entirely (an unknown-thing
+    page, or an item's own page, where "add inside this" makes no sense).
+
+    crumbtrail is pre-built header HTML: ancestor links plus the current
+    thing as a trailing bold, non-link segment -- doubles as the page's
+    title, since a big duplicate <h1> right below it added nothing. None
+    hides the header entirely (the /m root itself, the top of the
+    hierarchy, has nothing above it to show)."""
+    topbar = (f'<nav id="topbar" aria-label="Breadcrumb">{crumbtrail}</nav>'
+              if crumbtrail else "")
+    return (PAGE.replace("__TITLE__", esc(title)).replace("__BODY__", body)
+                .replace("__ID__", id_).replace("__HEAD__", head)
+                .replace("__ADD_CARD__", ADD_CARD).replace("__TOPBAR__", topbar)
+                .replace("__ADD_HOME__", "null" if add_home is None else f'"{esc(add_home)}"')
+                .replace("__ADD_ALLOW_ITEM__", "true" if add_allow_item else "false"))
 
 
 def esc(s: str) -> str:

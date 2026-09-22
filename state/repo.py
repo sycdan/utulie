@@ -286,6 +286,25 @@ class StateRepo:
         self._commit(f"mint {kind} {title} ({id_})")
         return id_
 
+    def _photo_path(self, id_: str) -> Path:
+        return self.root / KB / "artifacts" / f"{id_}.jpg"
+
+    def set_photo(self, id_: str, data: bytes, expect: str | None = None) -> None:
+        """Attach or replace a thing's photo. Always a jpeg at a
+        convention-based path, `kb/artifacts/<id>.jpg` -- no frontmatter field
+        needed to find it, so a doc's schema never has to know a photo
+        exists."""
+        self._expect(expect)
+        doc = self.doc(id_)
+        path = self._photo_path(id_)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        self._commit(f"photo: {doc.title} ({id_})")
+
+    def photo(self, id_: str) -> bytes | None:
+        path = self._photo_path(id_)
+        return path.read_bytes() if path.exists() else None
+
     def _entry_path(self, id_: str) -> Path | None:
         hits = self.locate(id_)
         return self.root / hits[0].path if len(hits) == 1 else None
