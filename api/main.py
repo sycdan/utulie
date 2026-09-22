@@ -14,10 +14,13 @@ import os
 import subprocess
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, Query
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi import Body, FastAPI, HTTPException, Query, Response
+from fastapi.responses import (HTMLResponse, PlainTextResponse,
+                               RedirectResponse)
 from pydantic import BaseModel, Field
 
+from api.code import decode
+from api.mobile import esc, render
 from state import DriftError, StateError, StateRepo, distance_m
 
 STATE = Path(os.environ.get("UTULIE_STATE", "./state-repo")).resolve()
@@ -112,7 +115,18 @@ class Quantity(BaseModel):
 # -- read --------------------------------------------------------------
 @app.get("/", include_in_schema=False)
 def root():
-    return RedirectResponse("/docs")
+    return RedirectResponse("/m")
+
+
+@app.get("/ca.crt", include_in_schema=False)
+def dev_ca():
+    """Bootstrap only: fetch this over plain HTTP once, trust it on the phone,
+    then use the HTTPS port. Camera and geolocation both require a secure
+    context, which a bare LAN IP over HTTP cannot be."""
+    ca = os.environ.get("UTULIE_DEV_CA")
+    if not ca or not Path(ca).exists():
+        raise HTTPException(404, "no dev CA configured (UTULIE_DEV_CA)")
+    return Response(Path(ca).read_bytes(), media_type="application/x-x509-ca-cert")
 
 
 @app.get("/things", summary="Every thing that has an identity")
@@ -321,3 +335,119 @@ def sync(remote: str = Body("origin", embed=True)):
     if out.returncode:
         raise HTTPException(400, out.stderr.strip())
     return {"pushed": out.stderr.strip() or "already up to date"}
+
+
+# -- phone -------------------------------------------------------------
+@app.get("/q/{code}", include_in_schema=False)
+@app.get("/Q/{code}", include_in_schema=False)
+def scanned(code: str):
+    """Where a scanned label lands. The QR carries a crockford-encoded quid.
+
+    Both cases of the path segment are routed: QR alphanumeric mode only has
+    uppercase, so every printed label's URL is .../Q/<code>. Path segments are
+    case-sensitive in Starlette, so without this a printed label 404s -- found
+    by checking before printing rather than after.
+    """
+    try:
+        return RedirectResponse(f"/m/{decode(code)}", status_code=302)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e
+
+
+@app.get("/m", response_class=HTMLResponse, include_in_schema=False)
+def phone_index():
+    r = repo()
+    containers, _ = r.index()
+    rows = "".join(
+        f'<li><a href="/m/{c}"><span>{esc(r.doc(c).title)}</span>'
+        f'<span class="qty">{len(r.contents(c))}</span></a></li>'
+        for c in sorted(containers, key=lambda c: r.doc(c).title.lower())
+    )
+    body = (f'<div class="card"><h1>Containers</h1>'
+            f'<ul>{rows or "<li class=muted>Nothing yet</li>"}</ul></div>')
+    return HTMLResponse(render("Containers", body, head=r.head()))
+
+
+@app.get("/m/{id}", response_class=HTMLResponse, include_in_schema=False)
+def phone_thing(id: str):
+    r = repo()
+    try:
+        doc = r.doc(id)
+    except StateError:
+        body = (f'<div class="card"><h1>Not in this repo</h1>'
+                f'<p class="gist">Nothing here has the id below. If the label is '
+                f'real, the thing needs minting.</p><code>{esc(id)}</code></div>')
+        return HTMLResponse(render("Unknown", body, id, r.head()), status_code=404)
+
+    chain = r.path_of(id)
+    crumbs = (" › ".join(f'<a href="/m/{c.id}">{esc(c.title)}</a>' for c in chain)
+              or '<span class="muted">not in any container</span>')
+    placements = r.locate(id)
+    qty = next((p.quantity for p in placements if p.quantity), None)
+
+    found = r.position_of(id)
+    if found:
+        pos, source = found
+        via = "" if source.id == id else f" · via {esc(source.title)}"
+        where = (f'<div class="big" id="dist" data-lat="{pos["lat"]}" '
+                 f'data-lon="{pos["lon"]}">…</div>'
+                 f'<div class="muted">last seen {esc(pos["at"][:10])}{via}</div>')
+    else:
+        where = '<div class="muted">No position recorded anywhere above it.</div>'
+
+    here_qty = next((p for p in placements if p.container is not None), None)
+    qty_row = ""
+    if doc.fungible and here_qty is not None:
+        qty_row = (
+            f'<div class="row" style="margin-top:.5rem">'
+            f'<input id="qtyInput" type="number" inputmode="numeric" min="0" '
+            f'value="{here_qty.quantity or 0}" style="flex:0 0 6rem">'
+            f'<button onclick="setQty(&quot;{here_qty.container}&quot;)">'
+            f'Set count here</button></div>'
+        )
+    opts = "".join(
+        f'<option value="{c}">{esc(r.doc(c).title)}</option>'
+        for c in r.index()[0] if c != id
+    )
+    if doc.kind == "container":
+        kids = "".join(
+            f'<li><a href="/m/{p.id}"><span>{esc(r.doc(p.id).title)}</span>'
+            f'<span class="qty">{p.quantity if p.quantity else ""}</span></a></li>'
+            for p in sorted(r.contents(id), key=lambda p: r.doc(p.id).title.lower())
+        )
+        inside = (f'<div class="card"><h1>Contains</h1><ul>{kids}</ul></div>'
+                  if kids else
+                  '<div class="card"><h1>Contains</h1>'
+                  '<p class="muted">Empty. Room for something.</p></div>')
+    else:
+        inside = ""
+
+    body = f"""
+<div class="card">
+  <span class="kind">{esc(doc.kind)}{' · stock' if doc.fungible else ''}</span>
+  <h1>{esc(doc.title)}</h1>
+  <p class="gist">{esc(doc.gist)}</p>
+  <div class="crumbs">{crumbs}{f' · <b>{qty}</b> here' if qty else ''}</div>
+</div>
+<div class="card">{where}
+  <div class="row" style="margin-top:.8rem">
+    <button onclick="markHere()">I am at this thing</button>
+  </div>
+</div>
+{inside}
+<div class="card">
+  <h1 style="font-size:1.05rem">Put it somewhere</h1>
+  <div class="row">
+    <select onchange="moveTo(this)">
+      <option value="">Move to…</option>{opts}
+    </select>
+  </div>
+  {qty_row}
+  <div class="row" style="margin-top:.5rem">
+    {'<button class="danger" onclick="checkOut()">Check out</button>' if placements else ''}
+    <a class="btn" href="/m">All containers</a>
+  </div>
+  <p style="margin:.9rem 0 0"><code>{esc(id)}</code></p>
+</div>
+"""
+    return HTMLResponse(render(doc.title, body, id, r.head()))

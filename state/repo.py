@@ -293,19 +293,21 @@ class StateRepo:
                 raise StateError(f"container {container_id} is not in the tree")
             parent = self.root / containers[container_id]
 
-        if quantity is not None:
-            if not doc.fungible:
-                raise StateError(f"{id_} is not fungible; quantity is meaningless")
-            if quantity <= 0:
-                raise StateError("quantity must be positive; check out instead")
+        if quantity is not None and not doc.fungible:
+            raise StateError(f"{id_} is not fungible; quantity is meaningless")
 
         existing = self.locate(id_)
         here = [p for p in existing if p.container == container_id]
         elsewhere = [p for p in existing if p.container != container_id]
         where = self.doc(container_id).title if container_id else "the tree root"
 
+        # Already here: delegate to set_quantity, zero and all -- it is the
+        # one place that owns "zero removes the placement." Only a *fresh*
+        # placement refuses zero, below.
         if here and doc.fungible and quantity is not None:
             return self.set_quantity(id_, container_id, quantity)
+        if quantity is not None and quantity <= 0:
+            raise StateError("quantity must be positive; check out instead")
         if here:
             return                                    # already there, nothing to do
         if elsewhere and not doc.fungible:

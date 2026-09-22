@@ -497,3 +497,19 @@ def test_undo_twice_is_a_redo_not_two_steps_back(repo, house):
     assert repo.locate(box) == []
     repo.undo()
     assert repo.locate(box)[0].container == house["tin"]
+
+
+def test_placing_zero_on_an_existing_fungible_placement_removes_it(repo, house):
+    """Same rule set_quantity(...,0) already follows. place() must honor it too."""
+    screw = repo.mint("item", "M4 screw", "stainless", fungible=True)
+    repo.place(screw, house["tin"], quantity=40)
+    repo.place(screw, house["tin"], quantity=0)
+    assert repo.locate(screw) == []
+
+
+def test_placing_zero_on_a_fresh_fungible_placement_is_still_refused(repo, house):
+    """Zero only makes sense as "remove what is there." There is nothing to
+    remove for a placement that does not exist yet."""
+    screw = repo.mint("item", "M4 screw", "stainless", fungible=True)
+    with pytest.raises(StateError, match="check out instead"):
+        repo.place(screw, house["tin"], quantity=0)
