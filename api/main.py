@@ -14,7 +14,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Response
 from fastapi.responses import (HTMLResponse, PlainTextResponse,
                                RedirectResponse)
 from pydantic import BaseModel, Field
@@ -116,6 +116,17 @@ class Quantity(BaseModel):
 @app.get("/", include_in_schema=False)
 def root():
     return RedirectResponse("/m")
+
+
+@app.get("/ca.crt", include_in_schema=False)
+def dev_ca():
+    """Bootstrap only: fetch this over plain HTTP once, trust it on the phone,
+    then use the HTTPS port. Camera and geolocation both require a secure
+    context, which a bare LAN IP over HTTP cannot be."""
+    ca = os.environ.get("UTULIE_DEV_CA")
+    if not ca or not Path(ca).exists():
+        raise HTTPException(404, "no dev CA configured (UTULIE_DEV_CA)")
+    return Response(Path(ca).read_bytes(), media_type="application/x-x509-ca-cert")
 
 
 @app.get("/things", summary="Every thing that has an identity")
@@ -387,9 +398,9 @@ def phone_thing(id: str):
             f'<span class="qty">{p.quantity if p.quantity else ""}</span></a></li>'
             for p in sorted(r.contents(id), key=lambda p: r.doc(p.id).title.lower())
         )
-        inside = (f'<div class="card"><h1>Inside</h1><ul>{kids}</ul></div>'
+        inside = (f'<div class="card"><h1>Contains</h1><ul>{kids}</ul></div>'
                   if kids else
-                  '<div class="card"><h1>Inside</h1>'
+                  '<div class="card"><h1>Contains</h1>'
                   '<p class="muted">Empty. Room for something.</p></div>')
     else:
         inside = ""
