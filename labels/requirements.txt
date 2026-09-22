@@ -1,0 +1,6 @@
+# Native dan-pc environment only -- the printer is a physical USB device,
+# never containerized. Not part of the app's own requirements.txt.
+niimprint==0.0.1
+websockets==15.0.1
+pillow==12.0.0
+qrcode==8.2

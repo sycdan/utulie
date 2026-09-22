@@ -10,12 +10,15 @@ explicit: POST /sync.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import subprocess
+import uuid
 from pathlib import Path
 
 from fastapi import (Body, FastAPI, Form, HTTPException, Query, Response,
-                     UploadFile)
+                     UploadFile, WebSocket, WebSocketDisconnect)
 from fastapi.responses import (HTMLResponse, PlainTextResponse,
                                RedirectResponse)
 from pydantic import BaseModel, Field
@@ -393,6 +396,53 @@ def sync(remote: str = Body("origin", embed=True)):
     if out.returncode:
         raise HTTPException(400, out.stderr.strip())
     return {"pushed": out.stderr.strip() or "already up to date"}
+
+
+# -- labels --------------------------------------------------------------
+# Spike: prove an outbound websocket from dan-pc can carry a print job at
+# all, before investing in labels as a separate service. One relay client
+# at a time -- the physical printer only exists in one place, so "whichever
+# client is connected" is unambiguous. No persistent queue: a job sent with
+# nobody connected just fails, which is fine for proving the concept.
+_relay: WebSocket | None = None
+_pending: dict[str, asyncio.Future] = {}
+
+
+@app.websocket("/labels/ws")
+async def labels_ws(ws: WebSocket):
+    global _relay
+    await ws.accept()
+    _relay = ws
+    try:
+        while True:
+            msg = json.loads(await ws.receive_text())
+            fut = _pending.pop(msg["job_id"], None)
+            if fut and not fut.done():
+                fut.set_result(msg)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if _relay is ws:
+            _relay = None
+
+
+@app.post("/things/{id}/print", summary="Print a label via the connected dan-pc relay client")
+async def print_thing(id: str, media: str = Query(..., description="Media name, e.g. item-50x30")):
+    guard(repo().doc, id)
+    if _relay is None:
+        raise HTTPException(503, "no print client connected")
+    job_id = uuid.uuid4().hex
+    fut = asyncio.get_event_loop().create_future()
+    _pending[job_id] = fut
+    await _relay.send_text(json.dumps({"job_id": job_id, "id": id, "media": media}))
+    try:
+        result = await asyncio.wait_for(fut, timeout=30)
+    except TimeoutError:
+        _pending.pop(job_id, None)
+        raise HTTPException(504, "print client did not respond in time")
+    if not result.get("ok"):
+        raise HTTPException(502, result.get("error") or "print failed")
+    return {"ok": True}
 
 
 # -- phone -------------------------------------------------------------

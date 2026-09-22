@@ -1,6 +1,9 @@
-# printer
+# labels
 
-Drives a Niimbot B1 over USB serial and renders quid labels for it.
+Drives a Niimbot B1 over USB serial and renders quid labels for it. Optional:
+the rest of utulie works with this directory deleted entirely -- nothing in
+`api/` imports it. `pip install -r labels/requirements.txt`, native only,
+never containerized (the printer is a physical USB device).
 
 `niimprint` speaks the old D11/B21v1 print task. The B1 accepts those commands,
 acknowledges them, and half-honours them -- pages above ~190 rows are silently
@@ -47,3 +50,16 @@ reproducible and the entry has been corrected to fit the stock.
 
 Defaults to every medium. The printer is on COM3 and must be awake -- USB
 enumerates on bus power with the MCU asleep, so a dark printer answers nothing.
+
+## Relay client (spike)
+
+`relay_client.py` connects outbound to utulie's `/labels/ws` websocket and
+drives the B1 on incoming jobs, so `POST /things/{id}/print` from the phone
+reaches the printer without a manual `printlabel.py` step:
+
+    python relay_client.py wss://utulie.wildharvesthomestead.com/labels/ws
+
+One client at a time -- the physical printer only exists in one place.
+Reconnects on drop; a job sent with nobody connected just fails. No queue,
+no auth on the socket yet -- see kb/01a0c748-94d0-7ebf-8403-297632c22a83.md
+for what a real version needs.
