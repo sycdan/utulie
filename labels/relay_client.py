@@ -20,7 +20,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "ws://localhost:8080/labels/ws"
 async def handle(ws, msg):
     job_id = msg["job_id"]
     try:
-        img, info = render(msg["id"], msg["media"])
+        img, info = render(msg["id"], msg["media"], text=msg.get("text", ""))
         B1Printer(SerialTransport("COM3")).print_image(img.rotate(90, expand=True), density=5)
         print(f"printed {msg['id']} ({msg['media']})")
         await ws.send(json.dumps({"job_id": job_id, "ok": True}))

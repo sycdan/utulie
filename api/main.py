@@ -427,14 +427,15 @@ async def labels_ws(ws: WebSocket):
 
 
 @app.post("/things/{id}/print", summary="Print a label via the connected dan-pc relay client")
-async def print_thing(id: str, media: str = Query(..., description="Media name, e.g. item-50x30")):
+async def print_thing(id: str, media: str = Query(..., description="Media name, e.g. item-50x30"),
+                       text: str = Query("", description="Caption printed next to the QR; defaults to the quid")):
     guard(repo().doc, id)
     if _relay is None:
         raise HTTPException(503, "no print client connected")
     job_id = uuid.uuid4().hex
     fut = asyncio.get_event_loop().create_future()
     _pending[job_id] = fut
-    await _relay.send_text(json.dumps({"job_id": job_id, "id": id, "media": media}))
+    await _relay.send_text(json.dumps({"job_id": job_id, "id": id, "media": media, "text": text}))
     try:
         result = await asyncio.wait_for(fut, timeout=30)
     except TimeoutError:
@@ -572,6 +573,7 @@ def phone_thing(id: str):
   </div>
   {qty_row}
   <div class="row" style="margin-top:.5rem">
+    <button onclick="printThing(this, '{'container-40x70' if doc.kind == 'container' else 'item-50x30'}')">🖨️ Print label</button>
     {'<button class="danger" onclick="checkOut()">Check out</button>' if placements else ''}
     <button class="danger" onclick="deleteThing()">Delete</button>
   </div>
