@@ -14,7 +14,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, Query, Response
+from fastapi import (Body, FastAPI, Form, HTTPException, Query, Response,
+                     UploadFile)
 from fastapi.responses import (HTMLResponse, PlainTextResponse,
                                RedirectResponse)
 from pydantic import BaseModel, Field
@@ -34,6 +35,9 @@ app = FastAPI(
     ),
     version="0",
 )
+
+
+KIND_ICON = {"item": "🏷️", "container": "📦"}
 
 
 def repo() -> StateRepo:
@@ -291,6 +295,22 @@ def mint(body: NewThing):
     return {"id": id_, "head": r.head()}
 
 
+@app.post("/things/{id}/photo", summary="Attach or replace a thing's photo")
+async def upload_photo(id: str, file: UploadFile, expect: str | None = Form(None)):
+    r = repo()
+    guard(r.set_photo, id, await file.read(), expect=expect)
+    return {"ok": True, "head": r.head()}
+
+
+@app.get("/things/{id}/photo", include_in_schema=False)
+def get_photo(id: str):
+    r = repo()
+    data = r.photo(id)
+    if data is None:
+        raise HTTPException(404, "no photo")
+    return Response(data, media_type="image/jpeg")
+
+
 @app.post("/things/{id}/place",
           summary="Put a thing somewhere. Moves it if it was elsewhere")
 def place(id: str, body: Placing):
@@ -383,15 +403,18 @@ def scanned(code: str):
 @app.get("/m", response_class=HTMLResponse, include_in_schema=False)
 def phone_index():
     r = repo()
-    containers, _ = r.index()
+    containers, placements = r.index()
+    nested = {p.id for p in placements if p.container is not None}
+    top = [c for c in containers if c not in nested]
     rows = "".join(
         f'<li><a href="/m/{c}"><span>{esc(r.doc(c).title)}</span>'
         f'<span class="qty">{len(r.contents(c))}</span></a></li>'
-        for c in sorted(containers, key=lambda c: r.doc(c).title.lower())
+        for c in sorted(top, key=lambda c: r.doc(c).title.lower())
     )
     body = (f'<div class="card"><h1>Containers</h1>'
             f'<ul>{rows or "<li class=muted>Nothing yet</li>"}</ul></div>')
-    return HTMLResponse(render("Containers", body, head=r.head()))
+    return HTMLResponse(render("Containers", body, head=r.head(),
+                                add_home="", add_allow_item=False))
 
 
 @app.get("/m/{id}", response_class=HTMLResponse, include_in_schema=False)
@@ -403,11 +426,12 @@ def phone_thing(id: str):
         body = (f'<div class="card"><h1>Not in this repo</h1>'
                 f'<p class="gist">Nothing here has the id below. If the label is '
                 f'real, the thing needs minting.</p><code>{esc(id)}</code></div>')
-        return HTMLResponse(render("Unknown", body, id, r.head()), status_code=404)
+        return HTMLResponse(
+            render("Unknown", body, id, r.head(),
+                   crumbtrail='<a href="/m">Home</a> › <b>Unknown</b>'),
+            status_code=404)
 
     chain = r.path_of(id)
-    crumbs = (" › ".join(f'<a href="/m/{c.id}">{esc(c.title)}</a>' for c in chain)
-              or '<span class="muted">not in any container</span>')
     placements = r.locate(id)
     qty = next((p.quantity for p in placements if p.quantity), None)
 
@@ -441,19 +465,30 @@ def phone_thing(id: str):
             f'<span class="qty">{p.quantity if p.quantity else ""}</span></a></li>'
             for p in sorted(r.contents(id), key=lambda p: r.doc(p.id).title.lower())
         )
-        inside = (f'<div class="card"><h1>Contains</h1><ul>{kids}</ul></div>'
+        inside = (f'<div class="card"><h2>Contains</h2><ul>{kids}</ul></div>'
                   if kids else
-                  '<div class="card"><h1>Contains</h1>'
+                  '<div class="card"><h2>Contains</h2>'
                   '<p class="muted">Empty. Room for something.</p></div>')
     else:
         inside = ""
 
+    photo = f"""
+<div class="photoBox" onclick="document.getElementById('photoInput').click()">
+  <img id="photoImg" src="/things/{id}/photo" alt=""
+       onload="this.style.display='block';document.getElementById('photoPh').style.display='none'"
+       onerror="this.style.display='none'">
+  <div id="photoPh" class="photoPh">Tap to add a photo</div>
+  <div class="photoBadge">📷</div>
+</div>
+<input id="photoInput" type="file" accept="image/*" capture="environment"
+       style="display:none" onchange="updatePhoto()">
+"""
     body = f"""
+{photo}
 <div class="card">
-  <span class="kind">{esc(doc.kind)}{' · stock' if doc.fungible else ''}</span>
-  <h1>{esc(doc.title)}</h1>
+  {'<span class="kind">Stock</span>' if doc.fungible else ''}
   <p class="gist">{esc(doc.gist)}</p>
-  <div class="crumbs">{crumbs}{f' · <b>{qty}</b> here' if qty else ''}</div>
+  {f'<p class="muted"><b>{qty}</b> here</p>' if qty else ''}
 </div>
 <div class="card">{where}
   <div class="row" style="margin-top:.8rem">
@@ -462,18 +497,22 @@ def phone_thing(id: str):
 </div>
 {inside}
 <div class="card">
-  <h1 style="font-size:1.05rem">Put it somewhere</h1>
+  <h2>Put it somewhere</h2>
   <div class="row">
     <select onchange="moveTo(this)">
       <option value="">Move to…</option>{opts}
     </select>
   </div>
   {qty_row}
-  <div class="row" style="margin-top:.5rem">
-    {'<button class="danger" onclick="checkOut()">Check out</button>' if placements else ''}
-    <a class="btn" href="/m">All containers</a>
-  </div>
+  {'<div class="row" style="margin-top:.5rem"><button class="danger" '
+   'onclick="checkOut()">Check out</button></div>' if placements else ''}
   <p style="margin:.9rem 0 0"><code>{esc(id)}</code></p>
 </div>
 """
-    return HTMLResponse(render(doc.title, body, id, r.head()))
+    add_home = id if doc.kind == "container" else None
+    ancestors = "".join(f'<a href="/m/{c.id}">{esc(c.title)}</a> › ' for c in chain)
+    icon = KIND_ICON.get(doc.kind, "")
+    crumbtrail = f'<a href="/m">Home</a> › {ancestors}<h1>{icon} {esc(doc.title)}</h1>'
+    return HTMLResponse(render(doc.title, body, id, r.head(),
+                                add_home=add_home, add_allow_item=True,
+                                crumbtrail=crumbtrail))
