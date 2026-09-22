@@ -308,6 +308,18 @@ async function checkOut() {
   if (await post(`/things/${ID}/check-out?expect=${head}`)) location.reload();
 }
 
+async function printThing(btn, media) {
+  const text = prompt("Caption to print next to the QR (optional -- blank uses the quid):", "");
+  if (text === null) return;
+  btn.disabled = true;
+  try {
+    const qs = new URLSearchParams({media, text});
+    if (await act(`/things/${ID}/print?${qs}`, { method: "POST" })) flash("Printed");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function deleteThing() {
   if (!confirm("Delete this for good? Can't be undone -- for a real thing you "
                + "just want out of a container, use Check out instead.")) return;
