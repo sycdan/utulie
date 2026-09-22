@@ -104,6 +104,13 @@ async function moveTo(sel) {
   if (await post(`/things/${ID}/place`, { container: sel.value || null })) location.reload();
 }
 
+async function setQty(container) {
+  const n = parseInt(document.getElementById("qtyInput").value, 10);
+  if (isNaN(n) || n < 0) return flash("Enter a count of 0 or more", true);
+  if (n === 0 && !confirm("Set to 0? That removes it from here.")) return;
+  if (await post(`/things/${ID}/place`, { container, quantity: n })) location.reload();
+}
+
 function markHere() {
   if (!navigator.geolocation) return flash("No geolocation on this device", true);
   flash("Getting a fix…");

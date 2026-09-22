@@ -388,6 +388,16 @@ def phone_thing(id: str):
     else:
         where = '<div class="muted">No position recorded anywhere above it.</div>'
 
+    here_qty = next((p for p in placements if p.container is not None), None)
+    qty_row = ""
+    if doc.fungible and here_qty is not None:
+        qty_row = (
+            f'<div class="row" style="margin-top:.5rem">'
+            f'<input id="qtyInput" type="number" inputmode="numeric" min="0" '
+            f'value="{here_qty.quantity or 0}" style="flex:0 0 6rem">'
+            f'<button onclick="setQty(&quot;{here_qty.container}&quot;)">'
+            f'Set count here</button></div>'
+        )
     opts = "".join(
         f'<option value="{c}">{esc(r.doc(c).title)}</option>'
         for c in r.index()[0] if c != id
@@ -425,6 +435,7 @@ def phone_thing(id: str):
       <option value="">Move to…</option>{opts}
     </select>
   </div>
+  {qty_row}
   <div class="row" style="margin-top:.5rem">
     {'<button class="danger" onclick="checkOut()">Check out</button>' if placements else ''}
     <a class="btn" href="/m">All containers</a>
