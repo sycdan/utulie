@@ -14,6 +14,14 @@ kb/<id>.md                 identity, KINGSMetaL frontmatter
 last seen.** Those two disagreeing is what "checked out" means, so don't
 collapse them.
 
+A name is lowercase alphanumerics and single dashes, nothing else — it is a
+path component in the tree, so it has to survive being a directory on any
+filesystem and a segment in a URL. Input is *slugified* rather than rejected,
+and the slug actually used comes back, because it may not be what you sent.
+`"Amaretti Tin"` becomes `amaretti-tin`, and `"../escape"` becomes `escape`,
+so traversal cannot survive a rename. Uniqueness is checked after slugifying,
+so `Garage` and `garage` collide.
+
 Names are ids until somebody renames them, which makes KINGSMetaL's
 (kind, name) uniqueness hold by construction. A rename edits the kb `name`
 field and moves the tree entry in one commit; it is the only place uniqueness

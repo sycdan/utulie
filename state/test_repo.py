@@ -2,7 +2,8 @@ import subprocess
 
 import pytest
 
-from .repo import DriftError, StateError, StateRepo, distance_m, new_id
+from .repo import (DriftError, StateError, StateRepo, distance_m, new_id,
+                   slugify)
 
 
 @pytest.fixture
@@ -170,16 +171,47 @@ def test_rename_rejects_a_clash_within_a_kind(repo, house):
         repo.rename(house["office"], "garage")
 
 
+def test_a_clash_is_detected_after_slugifying(repo, house):
+    """"Garage" and "garage" are the same name once slugified."""
+    repo.rename(house["garage"], "garage")
+    with pytest.raises(StateError, match="already named"):
+        repo.rename(house["office"], "Garage")
+
+
 def test_rename_allows_the_same_name_across_kinds(repo, house):
     thing = repo.mint("item", "Spare", "a spare")
     repo.rename(house["garage"], "spare")
     repo.rename(thing, "spare")          # item and container may share a name
 
 
-def test_rename_rejects_names_that_are_not_path_safe(repo, house):
-    for bad in ("Garage", "the garage", "../escape", ""):
-        with pytest.raises(StateError, match="name must match"):
+@pytest.mark.parametrize("given,expected", [
+    ("Amaretti Tin", "amaretti-tin"),
+    ("  Garage  ", "garage"),
+    ("../escape", "escape"),          # traversal cannot survive slugifying
+    ("Café Nöir", "cafe-noir"),
+    ("shelf #3", "shelf-3"),
+    ("a__b", "a-b"),
+])
+def test_slugify(given, expected):
+    assert slugify(given) == expected
+
+
+def test_rename_slugifies_and_reports_what_it_used(repo, house):
+    assert repo.rename(house["garage"], "Garden Shed") == "garden-shed"
+    assert repo.doc(house["garage"]).name == "garden-shed"
+    assert repo.index()[0][house["garage"]].endswith("/garden-shed")
+    assert repo.check() == []
+
+
+def test_rename_refuses_a_name_with_nothing_usable_in_it(repo, house):
+    for bad in ("", "---", "!!!", "☃"):
+        with pytest.raises(StateError, match="nothing usable"):
             repo.rename(house["garage"], bad)
+
+
+def test_a_minted_name_is_already_a_valid_slug(repo):
+    id_ = repo.mint("item", "A thing", "some thing")
+    assert slugify(repo.doc(id_).name) == repo.doc(id_).name
 
 
 def test_check_is_clean_on_a_healthy_repo(repo, house):

@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 import re
 import subprocess
+import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -31,7 +32,7 @@ CONTAINER_MARKER = ".container"
 KB = "kb"
 TREE = ".utulie"
 KINDS = ("item", "container")
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 # KINGSMetaL field order. Anything else is rejected rather than silently kept.
 FIELD_ORDER = ("kind", "id", "name", "gist", "scopes", "meta", "links")
@@ -46,6 +47,18 @@ def distance_m(a: dict, b: dict) -> float:
     dl = math.radians(b["lon"] - a["lon"])
     h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return round(2 * r * math.asin(math.sqrt(h)), 1)
+
+
+def slugify(text: str) -> str:
+    """Lowercase alphanumerics and single dashes. Nothing else.
+
+    A name is a path component in the tree, so it has to survive being a
+    directory on any filesystem and a segment in a URL. The human-facing text
+    is the doc's title; this is only its address.
+    """
+    ascii_ = (unicodedata.normalize("NFKD", text)
+              .encode("ascii", "ignore").decode("ascii"))
+    return re.sub(r"-{2,}", "-", re.sub(r"[^a-z0-9]+", "-", ascii_.lower())).strip("-")
 
 
 def new_id() -> str:
@@ -380,11 +393,13 @@ class StateRepo:
         write_lines(entry, [f"id: {id_}", f"quantity: {quantity}"])
         self._commit(f"set {doc.title} to {quantity} in {where}")
 
-    def rename(self, id_: str, name: str, expect: str | None = None) -> None:
+    def rename(self, id_: str, name: str, expect: str | None = None) -> str:
+        """Rename a thing. The name is slugified; the slug actually used comes
+        back, because it may not be what the caller passed in."""
         self._expect(expect)
+        name = slugify(name)
         if not NAME_RE.match(name):
-            raise StateError(
-                f"name must match {NAME_RE.pattern} -- lowercase, no spaces")
+            raise StateError(f"nothing usable as a name in {name!r}")
         doc = self.doc(id_)
         clash = next((d for d in self.docs().values()
                       if d.kind == doc.kind and d.name == name and d.id != id_),
@@ -399,6 +414,7 @@ class StateRepo:
             self._git("mv", src.relative_to(self.root).as_posix(),
                       (src.parent / name).relative_to(self.root).as_posix())
         self._commit(f"rename {old} to {name}")
+        return name
 
     def set_position(self, id_: str, lat: float, lon: float,
                      expect: str | None = None) -> None:

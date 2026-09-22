@@ -86,7 +86,12 @@ class Placing(BaseModel):
 
 
 class Naming(BaseModel):
-    name: str = Field(..., description="Lowercase, path-safe. Unique within the kind")
+    name: str = Field(
+        ...,
+        description="Slugified to lowercase alphanumerics and single dashes, so "
+                    "what comes back may differ from what you send. Must be "
+                    "unique within the kind.",
+    )
     expect: str | None = EXPECT
 
 
@@ -288,8 +293,8 @@ def set_quantity(id: str, body: Quantity):
 @app.put("/things/{id}/name", summary="Rename: kb field and tree entry, one commit")
 def rename(id: str, body: Naming):
     r = repo()
-    guard(r.rename, id, body.name, expect=body.expect)
-    return {"ok": True, "head": r.head()}
+    name = guard(r.rename, id, body.name, expect=body.expect)
+    return {"ok": True, "name": name, "head": r.head()}
 
 
 @app.get("/last-action", summary="What the most recent action was")
