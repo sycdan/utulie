@@ -339,8 +339,15 @@ def sync(remote: str = Body("origin", embed=True)):
 
 # -- phone -------------------------------------------------------------
 @app.get("/q/{code}", include_in_schema=False)
+@app.get("/Q/{code}", include_in_schema=False)
 def scanned(code: str):
-    """Where a scanned label lands. The QR carries a crockford-encoded quid."""
+    """Where a scanned label lands. The QR carries a crockford-encoded quid.
+
+    Both cases of the path segment are routed: QR alphanumeric mode only has
+    uppercase, so every printed label's URL is .../Q/<code>. Path segments are
+    case-sensitive in Starlette, so without this a printed label 404s -- found
+    by checking before printing rather than after.
+    """
     try:
         return RedirectResponse(f"/m/{decode(code)}", status_code=302)
     except ValueError as e:
