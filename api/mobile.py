@@ -200,7 +200,14 @@ async function submitAdd() {
     // ADD_HOME is "" for the tree root (a real, meaningful value -- place
     // with container: null), or an id; only null (button hidden) skips this.
     if (ADD_HOME !== null) {
-      if (!(await post(`/things/${minted.id}/place`, { container: ADD_HOME || null }))) return;
+      if (!(await post(`/things/${minted.id}/place`, { container: ADD_HOME || null }))) {
+        // Placement failed (a name clash, most often) -- the mint already
+        // committed and there is no transaction spanning both calls, so an
+        // orphan would otherwise sit in kb/ with no tree entry and no way
+        // back to it from this screen. Clean it up rather than leave it.
+        await act(`/things/${minted.id}?expect=${head}`, { method: "DELETE" });
+        return;
+      }
     }
     const file = document.getElementById("addPhoto").files[0];
     if (file) {
