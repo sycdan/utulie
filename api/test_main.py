@@ -47,6 +47,19 @@ def test_mint_route_defaults_name_to_the_slugified_title(client):
     assert client.get(f"/things/{id_}").json()["name"] == "a-new-thing"
 
 
+def test_the_photo_and_the_replace_badge_are_separate_tap_targets(client):
+    """The thumbnail crops to 4:3, so tapping it has to open the full frame.
+    That only works if the surrounding box has no tap handler of its own --
+    it used to, and it swallowed the whole photo to open the file picker."""
+    id_ = client.post("/things", json={
+        "kind": "item", "title": "Photographed", "gist": "g"}).json()["id"]
+    page = client.get(f"/m/{id_}").text
+
+    assert '<div class="photoBox">' in page          # no onclick on the box
+    assert 'onclick="openPhoto()"' in page
+    assert page.count("photoInput').click()") == 2   # badge and placeholder
+
+
 def test_health_reports_the_printer_but_never_fails_on_it(client, monkeypatch):
     """The relay runs on another machine. An absent one is an ordinary state,
     so it has to show in the payload without moving `ok` -- `ok` is what the

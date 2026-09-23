@@ -589,13 +589,19 @@ def phone_thing(id: str):
     else:
         inside = ""
 
+    # Two tap targets, not one. The thumbnail is cropped to 4:3, so tapping it
+    # has to mean "show me the whole frame" -- which leaves the badge to mean
+    # "replace", the job the whole box used to do. The placeholder keeps the
+    # old behaviour because with no photo there is nothing to open.
     photo = f"""
-<div class="photoBox" onclick="document.getElementById('photoInput').click()">
-  <img id="photoImg" src="/things/{id}/photo" alt=""
+<div class="photoBox">
+  <img id="photoImg" src="/things/{id}/photo" alt="" onclick="openPhoto()"
        onload="this.style.display='block';document.getElementById('photoPh').style.display='none'"
        onerror="this.style.display='none'">
-  <div id="photoPh" class="photoPh">Tap to add a photo</div>
-  <div class="photoBadge">📷</div>
+  <div id="photoPh" class="photoPh"
+       onclick="document.getElementById('photoInput').click()">Tap to add a photo</div>
+  <div class="photoBadge" title="Replace photo"
+       onclick="document.getElementById('photoInput').click()">📷</div>
 </div>
 <input id="photoInput" type="file" accept="image/*" capture="environment"
        style="display:none" onchange="updatePhoto()">

@@ -118,7 +118,12 @@ PAGE = """<!doctype html>
   .photoBadge { position:absolute; right:.5rem; bottom:.5rem; width:2.1rem;
                 height:2.1rem; border-radius:999px; background:rgba(0,0,0,.55);
                 color:#fff; display:flex; align-items:center; justify-content:center;
-                font-size:1.05rem; pointer-events:none; }
+                font-size:1.05rem; }
+  /* The thumbnail is object-fit:cover, so it crops. Contain here, on black,
+     is the point of the whole overlay: see the frame you actually took. */
+  #lightbox { display:none; position:fixed; inset:0; background:#000; z-index:20; }
+  #lightbox.show { display:flex; align-items:center; justify-content:center; }
+  #lightbox img { max-width:100%; max-height:100%; object-fit:contain; }
   #addBtn { position:fixed; right:1rem; bottom:calc(1rem + env(safe-area-inset-bottom));
             width:3.4rem; height:3.4rem; border-radius:999px; background:var(--accent);
             color:#fff; font-size:1.7rem; line-height:1; border:none;
@@ -139,6 +144,7 @@ PAGE = """<!doctype html>
 </nav>
 <main>__BODY__</main>
 <div id="flash"></div>
+<div id="lightbox" onclick="closePhoto()"><img alt=""></div>
 __ADD_CARD__
 __SYNC_CARD__
 <script>
@@ -272,6 +278,22 @@ async function doSync() {
   closeSync();
   refreshSyncStatus();
 }
+
+function openPhoto() {
+  // Same URL the thumbnail already fetched, so this is a cache hit and the
+  // overlay does not flash empty while a second copy downloads.
+  const lb = document.getElementById("lightbox");
+  lb.querySelector("img").src = `/things/${ID}/photo`;
+  lb.className = "show";
+}
+
+function closePhoto() {
+  document.getElementById("lightbox").className = "";
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closePhoto();
+});
 
 async function updatePhoto() {
   const file = document.getElementById("photoInput").files[0];
