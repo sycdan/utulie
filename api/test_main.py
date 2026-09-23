@@ -39,6 +39,14 @@ def test_delete_route_erases_a_thing(client):
     assert client.get(f"/things/{id_}").status_code == 400
 
 
+def test_mint_route_defaults_name_to_the_slugified_title(client):
+    mint = client.post("/things", json={
+        "kind": "item", "title": "A New Thing", "gist": "g",
+    })
+    id_ = mint.json()["id"]
+    assert client.get(f"/things/{id_}").json()["name"] == "a-new-thing"
+
+
 def test_title_route_edits_the_h1(client):
     mint = client.post("/things", json={"kind": "item", "title": "Oops", "gist": "g"})
     id_ = mint.json()["id"]

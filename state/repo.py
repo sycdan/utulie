@@ -10,9 +10,10 @@ Layout:
 The tree records home. `meta.position` on the kb doc records where the thing
 actually was last seen; the two disagreeing is what "checked out" means.
 
-Directory and file names are the kb doc's `name` verbatim, which is the id
-until somebody renames it. Identity lives in the kb doc; the tree only says
-where things are.
+Directory and file names are the kb doc's `name` verbatim -- the slugified
+title by default, unique among siblings sharing one parent (not globally, and
+not scoped by kind: a container and an item in the same parent share one
+namespace). Identity lives in the kb doc; the tree only says where things are.
 """
 
 from __future__ import annotations
@@ -296,8 +297,15 @@ class StateRepo:
         id_ = id_ or new_id()
         if self._doc_path(id_).exists():
             raise StateError(f"{id_} already exists")
-        # Minting with name == id makes (kind, name) unique by construction.
-        doc = Doc(kind=kind, id=id_, name=id_, gist=gist, title=title,
+        # A slugified title reads far better in the tree than a bare quid,
+        # and nothing collides yet -- a fresh mint has no placement, so
+        # there is no sibling to clash with. A title that slugifies to
+        # nothing usable (all-emoji, all-punctuation) falls back to the id,
+        # same as before this default existed.
+        name = slugify(title)
+        if not NAME_RE.match(name):
+            name = id_
+        doc = Doc(kind=kind, id=id_, name=name, gist=gist, title=title,
                   meta={"fungible": True} if fungible else {})
         self._write_doc(doc)
         self._commit(f"mint {kind} {title} ({id_})")
@@ -325,6 +333,23 @@ class StateRepo:
     def _entry_path(self, id_: str) -> Path | None:
         hits = self.locate(id_)
         return self.root / hits[0].path if len(hits) == 1 else None
+
+    def _sibling_names(self, container_id: str | None) -> dict[str, str]:
+        """name -> id for everything directly inside one container (or the
+        tree root when `container_id` is None). Items and containers share
+        one namespace there -- a directory entry is either a `.container`
+        directory or a placement file, never both, so a container and an
+        item with the same name in the same parent collide regardless of
+        kind."""
+        _, placements = self.index()
+        return {self.doc(p.id).name: p.id
+                for p in placements if p.container == container_id}
+
+    def _check_name_free(self, name: str, container_id: str | None, exclude_id: str) -> None:
+        clash = self._sibling_names(container_id).get(name)
+        if clash is not None and clash != exclude_id:
+            where = self.doc(container_id).title if container_id else "the tree root"
+            raise StateError(f"{name!r} is already used in {where}")
 
     def place(self, id_: str, container_id: str | None = None,
               quantity: int | None = None, expect: str | None = None) -> None:
@@ -360,6 +385,7 @@ class StateRepo:
             raise StateError("quantity must be positive; check out instead")
         if here:
             return                                    # already there, nothing to do
+        self._check_name_free(doc.name, container_id, id_)
         if elsewhere and not doc.fungible:
             if len(elsewhere) > 1:
                 raise StateError(f"{id_} is placed {len(elsewhere)} times; "
@@ -460,11 +486,15 @@ class StateRepo:
         if not NAME_RE.match(name):
             raise StateError(f"nothing usable as a name in {name!r}")
         doc = self.doc(id_)
-        clash = next((d for d in self.docs().values()
-                      if d.kind == doc.kind and d.name == name and d.id != id_),
-                     None)
-        if clash is not None:
-            raise StateError(f"{doc.kind} {clash.id} is already named {name!r}")
+        if name == doc.name:
+            return name                # already this name -- nothing to move
+        # Only checked when the thing sits in exactly one place -- same scope
+        # _entry_path already limits itself to, since a rename only moves the
+        # tree entry when there is exactly one to move. Unplaced or
+        # multiply-placed, there is nothing here to collide with yet.
+        hits = self.locate(id_)
+        if len(hits) == 1:
+            self._check_name_free(name, hits[0].container, id_)
         src = self._entry_path(id_)
         old = doc.name
         doc.name = name

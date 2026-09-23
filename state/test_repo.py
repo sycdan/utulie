@@ -31,8 +31,13 @@ def house(repo):
     return ids
 
 
-def test_mint_names_the_doc_after_its_id(repo):
-    id_ = repo.mint("item", "A thing", "some thing")
+def test_mint_defaults_name_to_the_slugified_title(repo):
+    id_ = repo.mint("item", "A Thing", "some thing")
+    assert repo.doc(id_).name == "a-thing"
+
+
+def test_mint_falls_back_to_the_id_when_nothing_slugifies(repo):
+    id_ = repo.mint("item", "🎉🎉🎉", "emoji only")
     assert repo.doc(id_).name == id_
 
 
@@ -51,7 +56,7 @@ def test_empty_container_survives_a_commit(repo, house):
     tracked = subprocess.run(
         ["git", "ls-files"], cwd=repo.root, capture_output=True, text=True
     ).stdout
-    assert f".utulie/{house['house']}/{house['garage']}/.container" in tracked
+    assert ".utulie/house/garage/.container" in tracked
     assert house["garage"] in repo.index()[0]
 
 
@@ -144,6 +149,25 @@ def test_replacing_a_container_carries_its_contents(repo, house):
     assert repo.path_of(house["tin"])[-1].id == house["garage"]
 
 
+def test_place_refuses_a_fresh_placement_that_collides(repo, house):
+    """Two things that happen to slugify to the same name, both landing in
+    the same container -- place() itself has to catch this; rename() only
+    guards renames, and neither of these was ever renamed."""
+    a = repo.mint("item", "Spare", "first")
+    b = repo.mint("item", "Spare", "second")
+    repo.place(a, house["house"])
+    with pytest.raises(StateError, match="already used"):
+        repo.place(b, house["house"])
+
+
+def test_place_refuses_a_move_that_collides_at_the_destination(repo, house):
+    spare = repo.mint("container", "Spare", "sits in office")
+    repo.place(spare, house["office"])
+    repo.rename(house["garage"], "spare")   # now house/garage is also "spare"
+    with pytest.raises(StateError, match="already used"):
+        repo.place(spare, house["house"])    # moving into house collides with garage
+
+
 def test_a_container_cannot_be_placed_inside_itself(repo, house):
     with pytest.raises(StateError, match="inside itself"):
         repo.place(house["office"], house["tin"])
@@ -159,29 +183,48 @@ def test_check_out_leaves_the_doc_and_drops_the_placement(repo, house):
 
 
 def test_rename_moves_the_kb_field_and_the_tree_entry_together(repo, house):
-    repo.rename(house["garage"], "garage")
-    assert repo.doc(house["garage"]).name == "garage"
-    assert repo.index()[0][house["garage"]].endswith("/garage")
+    repo.rename(house["garage"], "big-garage")
+    assert repo.doc(house["garage"]).name == "big-garage"
+    assert repo.index()[0][house["garage"]].endswith("/big-garage")
     assert repo.check() == []
 
 
-def test_rename_rejects_a_clash_within_a_kind(repo, house):
-    repo.rename(house["garage"], "garage")
-    with pytest.raises(StateError, match="already named"):
+def test_renaming_to_the_name_it_already_has_is_a_no_op(repo, house):
+    """Mint now defaults name to the slugified title, so renaming to that
+    same slug is common, not a mistake -- must not attempt a self-move."""
+    assert repo.rename(house["garage"], "Garage") == "garage"
+    assert repo.check() == []
+
+
+def test_rename_refuses_a_clash_with_a_sibling(repo, house):
+    """Office and garage are both directly in house -- the same directory."""
+    with pytest.raises(StateError, match="already used"):
         repo.rename(house["office"], "garage")
 
 
-def test_a_clash_is_detected_after_slugifying(repo, house):
+def test_a_sibling_clash_is_detected_after_slugifying(repo, house):
     """"Garage" and "garage" are the same name once slugified."""
-    repo.rename(house["garage"], "garage")
-    with pytest.raises(StateError, match="already named"):
+    with pytest.raises(StateError, match="already used"):
         repo.rename(house["office"], "Garage")
 
 
-def test_rename_allows_the_same_name_across_kinds(repo, house):
-    thing = repo.mint("item", "Spare", "a spare")
-    repo.rename(house["garage"], "spare")
-    repo.rename(thing, "spare")          # item and container may share a name
+def test_rename_refuses_a_cross_kind_clash_with_a_sibling(repo, house):
+    """A directory entry is either a container or an item placement, never
+    both -- the same name collides regardless of kind."""
+    spare = repo.mint("item", "Spare", "a spare")
+    repo.place(spare, house["house"])    # now a sibling of garage
+    with pytest.raises(StateError, match="already used"):
+        repo.rename(spare, "garage")
+
+
+def test_rename_allows_the_same_name_in_different_containers(repo, house):
+    """Garage lives in house; tin lives in office -- not siblings."""
+    assert repo.rename(house["tin"], "garage") == "garage"
+
+
+def test_rename_skips_the_clash_check_when_unplaced(repo, house):
+    thing = repo.mint("item", "Spare", "a spare")   # never placed
+    assert repo.rename(thing, "garage") == "garage"  # no siblings to collide with
 
 
 @pytest.mark.parametrize("given,expected", [
@@ -219,7 +262,7 @@ def test_check_is_clean_on_a_healthy_repo(repo, house):
 
 
 def test_check_reports_a_placement_with_no_kb_doc(repo, house):
-    stray = repo.root / ".utulie" / house["house"] / "mystery"
+    stray = repo.root / ".utulie" / "house" / "mystery"
     stray.write_text(f"id: {new_id()}\n", newline="\n")
     problems = repo.check()
     assert [p.kind for p in problems] == ["orphan-placement"]
@@ -229,7 +272,7 @@ def test_check_reports_a_non_fungible_item_placed_twice(repo, house):
     box = repo.mint("item", "Label box", "a box of labels")
     repo.place(box, house["tin"])
     # forge a second placement the API refuses to create
-    (repo.root / ".utulie" / house["house"] / house["garage"] / box).write_text(
+    (repo.root / ".utulie" / "house" / "garage" / repo.doc(box).name).write_text(
         f"id: {box}\n", newline="\n"
     )
     assert [p.kind for p in repo.check()] == ["placed-twice"]
@@ -237,7 +280,7 @@ def test_check_reports_a_non_fungible_item_placed_twice(repo, house):
 
 def test_check_reports_name_drift(repo, house):
     d = repo.doc(house["garage"])
-    d.name = "garage"
+    d.name = "renamed-garage"
     repo._write_doc(d)          # kb renamed, tree not
     assert [p.kind for p in repo.check()] == ["name-drift"]
 

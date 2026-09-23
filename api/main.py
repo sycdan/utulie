@@ -303,7 +303,7 @@ def init():
     return {"state": str(STATE)}
 
 
-@app.post("/things", summary="Mint a thing (name starts out equal to its id)")
+@app.post("/things", summary="Mint a thing (name defaults to the slugified title)")
 def mint(body: NewThing):
     r = repo()
     id_ = guard(r.mint, body.kind, body.title, body.gist,
