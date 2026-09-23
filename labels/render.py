@@ -25,16 +25,16 @@ MEDIA = {                               # feed x head, in dots
 # capacity. Exceeding it is refused rather than silently clipped off-canvas.
 #
 # max_chars is advisory, not enforced, because width is not a cliff: every
-# layout below shrinks the font to fit rather than refusing, all the way down
-# to 8 px (~1 mm), which prints but cannot be read. These are the lengths at
-# which a single line still clears a 2 mm cap height on representative text --
+# layout shrinks the font to fit rather than refusing, all the way down to
+# 8 px (~1 mm), which prints but cannot be read. These are the whole-caption
+# lengths that still clear a 2 mm cap height once wrapped across max_lines --
 # past that you get a label, just a worse one than the free quid default.
 TEXT_LIMITS = {
-    "50x30":       dict(max_lines=3, max_chars=29,
+    "50x30":       dict(max_lines=3, max_chars=65,
                         note="beside the QR, short (feed) axis"),
-    "50x50-round": dict(max_lines=1, max_chars=34,
+    "50x50-round": dict(max_lines=1, max_chars=29,
                         note="below the QR, chord-width limited"),
-    "40x70":       dict(max_lines=2, max_chars=40,
+    "40x70":       dict(max_lines=2, max_chars=78,
                         note="beside the QR, across the short (head) axis"),
 }
 
@@ -72,10 +72,63 @@ def qr_block(payload, budget, border=4):
     return img.resize((side, side), Image.NEAREST), side, px, mods
 
 
+# Thermal stock feeds with real registration slack, so text drawn to within a
+# fraction of a millimetre of the edge reads as having run off it even when
+# the dots are technically on the label.
+MARGIN = 20                             # dots of quiet edge, total across the axis
+
+
+def wrap(d, text, f, budget):
+    """Greedy word wrap at font `f`. A single word wider than `budget` gets a
+    line to itself and overhangs; shrinking the font is the answer to that,
+    not hyphenation, so the caller retries smaller."""
+    lines, cur = [], ""
+    for word in text.split():
+        trial = f"{cur} {word}".strip()
+        if cur and d.textlength(trial, font=f) > budget:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = trial
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def fit(d, text, default, media, budget_w, budget_h, start, line_h):
+    """Lay `text` out as large as it goes: wrap it, and take the first font
+    size whose wrapping lands inside the medium's line count and both budgets.
+
+    Explicit newlines are honoured as hard breaks -- a caller that asked for
+    three lines gets three. Without any text the default quid fragment is used
+    as-is; it was tuned to fit and needs no wrapping.
+
+    Below the floor nothing fits and the label still has to print, so the
+    smallest size wins and surplus *lines* are dropped. A single word too wide
+    even at 8 px still overhangs -- clipping mid-word would put text on a
+    label that is not the text that was asked for, which is worse.
+    """
+    max_lines = TEXT_LIMITS[media]["max_lines"]
+    for fs in range(start, 7, -1):
+        f = font(fs)
+        lines = (default if not text else
+                 [w for para in text.split("\n") for w in wrap(d, para, f, budget_w)])
+        if len(lines) > max_lines or len(lines) * line_h(fs) > budget_h:
+            continue
+        if max(d.textlength(t, font=f) for t in lines) > budget_w:
+            continue
+        return lines, f, fs
+    f = font(8)
+    lines = (default if not text else
+             [w for para in text.split("\n") for w in wrap(d, para, f, budget_w)])
+    return lines[:max_lines], f, 8
+
+
 def render(quid, media, text=""):
-    """`text`, if given, replaces the printed quid fragment with caller-supplied
-    lines (split on literal newlines -- no auto-wrap). The QR still always
-    carries the quid; `text` only changes what a human reads off the label."""
+    """`text`, if given, replaces the printed quid fragment. It is word-wrapped
+    into however many lines the medium allows, and the font is chosen as the
+    largest that fits in those lines. The QR still always carries the quid;
+    `text` only changes what a human reads off the label."""
     m = MEDIA[media]
     if text and text.count("\n") + 1 > TEXT_LIMITS[media]["max_lines"]:
         raise ValueError(f"{media} fits at most {TEXT_LIMITS[media]['max_lines']} "
@@ -91,12 +144,11 @@ def render(quid, media, text=""):
         # Text lines run along head, so each is drawn flat and rotated in.
         qr, side, px, mods = qr_block(payload, head - 8, border=3)
         c.paste(qr, (6, (head - side) // 2))
-        lines = text.split("\n") if text else [f"{g[0]}-{g[1]}-{g[2]}", f"{g[3]}-{g[4]}"]
-        fs = 48
-        while fs > 8 and max(d.textlength(t, font=font(fs)) for t in lines) > head - 20:
-            fs -= 1
-        f = font(fs)
         x = 6 + side + 14
+        lines, f, fs = fit(
+            d, text, [f"{g[0]}-{g[1]}-{g[2]}", f"{g[3]}-{g[4]}"], media,
+            budget_w=head - MARGIN, budget_h=feed - x - 6, start=48,
+            line_h=lambda s: s + 14)   # each line is a rotated strip plus its gap
         for t in reversed(lines):   # feed order flips under the print rotation
             w = int(d.textlength(t, font=f)) + 4
             strip = Image.new("1", (w, fs + 8), 1)
@@ -109,15 +161,10 @@ def render(quid, media, text=""):
         qr, side, px, mods = qr_block(payload, feed - 4, border=3)
         c.paste(qr, (2, 2))
         x0 = side + 8
-        lines = text.split("\n") if text else [f"{g[0]}-{g[1]}", f"{g[2]}-{g[3]}", g[4]]
-        fs = 30
-        while fs > 8:
-            f = font(fs)
-            if (max(d.textlength(t, font=f) for t in lines) <= feed - 8
-                    and len(lines) * (fs + 3) <= head - x0 - 4):
-                break
-            fs -= 1
-        f = font(fs)
+        lines, f, fs = fit(
+            d, text, [f"{g[0]}-{g[1]}", f"{g[2]}-{g[3]}", g[4]], media,
+            budget_w=feed - MARGIN, budget_h=head - x0 - 4, start=30,
+            line_h=lambda s: s + 3)
         for i, t in enumerate(lines):
             d.text((4, x0 + i * (fs + 3)), t, font=f, fill=0)
     else:

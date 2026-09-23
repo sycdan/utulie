@@ -41,12 +41,19 @@ the thing being labelled, not a property of the label, so it lives in `suits`
 
 ## Text budget
 
-`max_lines` is enforced: exceed it and `render` raises rather than clip off
-canvas. Width is not, because no layout refuses on width -- each one shrinks
-the font to fit, down to 8 px (~1 mm), which prints and cannot be read. So
-`max_chars` is advisory: the length at which one line still clears a 2 mm cap
-height on representative text. Past it you still get a label, just a worse one
-than the quid default you would have got for free.
+Caption text is word-wrapped across `max_lines` and the font is the largest
+size whose wrapping fits. Explicit newlines stay hard breaks, so a caller that
+asked for three lines gets three; exceeding `max_lines` that way raises.
+
+Width is never enforced -- no layout refuses on width, each shrinks the font
+to fit, down to 8 px (~1 mm), which prints and cannot be read. So `max_chars`
+is advisory: the whole-caption length that still clears a 2 mm cap height once
+wrapped. Past it you still get a label, just a worse one than the quid default
+you would have got for free.
+
+Text keeps `MARGIN` dots of quiet edge. Drawn any closer it reads as having
+run off the label even when the dots are on it, because the stock feeds with
+more registration slack than that.
 
 Media dimensions are the *stock*, measured, not the printhead. The 70 mm stock
 was first assumed to be 50 mm wide and calibrated against the full 376-dot
