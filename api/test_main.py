@@ -47,6 +47,29 @@ def test_mint_route_defaults_name_to_the_slugified_title(client):
     assert client.get(f"/things/{id_}").json()["name"] == "a-new-thing"
 
 
+def test_health_reports_the_printer_but_never_fails_on_it(client, monkeypatch):
+    """The relay runs on another machine. An absent one is an ordinary state,
+    so it has to show in the payload without moving `ok` -- `ok` is what the
+    container healthcheck and the ingress probe read, and an unplugged printer
+    must not take the service down."""
+    assert client.get("/health").json() == {"ok": True, "printer": False}
+
+    monkeypatch.setattr(main_module, "_relay", object())
+    assert client.get("/health").json() == {"ok": True, "printer": True}
+
+
+def test_a_thing_page_says_so_when_no_print_client_is_connected(client, monkeypatch):
+    """Otherwise the first sign is a 503 after you have already chosen a
+    caption and a medium."""
+    id_ = client.post("/things", json={
+        "kind": "item", "title": "Labelled", "gist": "g"}).json()["id"]
+
+    assert "Print client offline" in client.get(f"/m/{id_}").text
+
+    monkeypatch.setattr(main_module, "_relay", object())
+    assert "Print client offline" not in client.get(f"/m/{id_}").text
+
+
 def test_title_route_edits_the_h1(client):
     mint = client.post("/things", json={"kind": "item", "title": "Oops", "gist": "g"})
     id_ = mint.json()["id"]

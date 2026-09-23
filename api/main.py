@@ -137,8 +137,14 @@ class Quantity(BaseModel):
 def health():
     """Container healthcheck and ingress liveness probe. Deliberately does not
     touch the state repo -- a broken UTULIE_STATE should not read as the
-    process being down; that is what /check is for."""
-    return {"ok": True}
+    process being down; that is what /check is for.
+
+    `printer` reports the label relay's socket (`_relay`, in the labels section
+    below) and never asserts it: the relay is a process on another machine, and
+    running without one is an ordinary state, not a fault. So `ok` stays true
+    when it is absent -- otherwise an unplugged printer would take the
+    container unhealthy and the ingress down with it."""
+    return {"ok": True, "printer": _relay is not None}
 
 
 @app.get("/", include_in_schema=False)
@@ -594,6 +600,14 @@ def phone_thing(id: str):
 <input id="photoInput" type="file" accept="image/*" capture="environment"
        style="display:none" onchange="updatePhoto()">
 """
+    # Rendered, not fetched: the relay's state is already in this process, so
+    # the page can say so without a round trip. It is a snapshot -- the relay
+    # may connect a second later -- which is why the button below stays live
+    # and this only warns. Pressing it anyway costs a 503 that says the same.
+    printer_warning = "" if _relay is not None else (
+        '<p class="muted" style="margin:.6rem 0 0">Print client offline. '
+        'Start the relay on dan-pc.</p>'
+    )
     body = f"""
 {photo}
 <div class="card">
@@ -635,6 +649,7 @@ def phone_thing(id: str):
     <button data-title="{esc(doc.title)}"
             onclick="printThing(this, document.getElementById('printMedia').value)">🖨️ Print label</button>
   </div>
+  {printer_warning}
 </div>
 """
     add_home = id if doc.kind == "container" else None

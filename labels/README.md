@@ -63,3 +63,33 @@ One client at a time -- the physical printer only exists in one place.
 Reconnects on drop; a job sent with nobody connected just fails. No queue,
 no auth on the socket yet -- see kb/01a0c748-94d0-7ebf-8403-297632c22a83.md
 for what a real version needs.
+
+### Running it without thinking about it
+
+dan-pc registers it as a scheduled task at logon, so nothing has to be
+started before printing:
+
+    $py = "$env:LOCALAPPDATA\Programs\Python\Python314\pythonw.exe"
+    $me = "$env:USERDOMAIN\$env:USERNAME"
+    Register-ScheduledTask -TaskName utulie-print-relay -Force `
+      -Action (New-ScheduledTaskAction -Execute $py `
+         -Argument "relay_client.py wss://utulie.wildharvesthomestead.com/labels/ws" `
+         -WorkingDirectory "C:\Users\Dan\mi\workspace\utulie\labels") `
+      -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $me) `
+      -Principal (New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive) `
+      -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable `
+         -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
+         -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew)
+
+`pythonw`, so there is no window; `ExecutionTimeLimit 0`, because the default
+kills a task after three days and this is meant to outlive that.
+
+No window also means no output, which is what `relay.cmd` is for: run it in a
+terminal to watch the relay connect and report jobs, or to find out why it is
+not running. Stop the task first -- one client at a time.
+
+The server side says whether it has a client: `/health` reports `printer`
+alongside `ok`, and a thing's page says "Print client offline" next to the
+print button rather than waiting for a 503. `ok` deliberately stays true with
+no relay -- it is the container healthcheck, and an unplugged printer is not
+the service being down.
