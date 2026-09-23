@@ -316,7 +316,7 @@ async function editTitle() {
 
 async function editGist() {
   const cur = document.getElementById("idGist").textContent;
-  const v = prompt("Gist (one line):", cur === "(tap to add one)" ? "" : cur);
+  const v = prompt("Gist (one line):", cur === "Tap to add a description" ? "" : cur);
   if (v === null) return;
   if (await put(`/things/${ID}/gist`, { gist: v })) location.reload();
 }

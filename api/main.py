@@ -598,7 +598,8 @@ def phone_thing(id: str):
 {photo}
 <div class="card">
   {'<span class="kind">Stock</span>' if doc.fungible else ''}
-  <p class="gist">{esc(doc.gist)}</p>
+  <p class="gist" onclick="editGist()" style="cursor:pointer">
+    <span id="idGist">{esc(doc.gist) or "Tap to add a description"}</span></p>
   {f'<p class="muted"><b>{qty}</b> here</p>' if qty else ''}
 </div>
 <div class="card">{where}
@@ -622,10 +623,6 @@ def phone_thing(id: str):
 </div>
 <div class="card">
   <h2>Identification</h2>
-  <p class="muted" onclick="editTitle()" style="cursor:pointer">
-    Title: <b id="idTitle">{esc(doc.title)}</b></p>
-  <p class="muted" onclick="editGist()" style="cursor:pointer">
-    Gist: <span id="idGist">{esc(doc.gist) or "(tap to add one)"}</span></p>
   <p class="muted" onclick="editName()" style="cursor:pointer">
     Name: <span id="idName">{esc(doc.name)}</span></p>
   <p style="margin:.5rem 0 0"><code>{esc(id)}</code></p>
@@ -643,7 +640,9 @@ def phone_thing(id: str):
     add_home = id if doc.kind == "container" else None
     ancestors = "".join(f'<a href="/m/{c.id}">{esc(c.title)}</a> › ' for c in chain)
     icon = thing_icon(doc.kind, doc.fungible)
-    crumbtrail = f'<a href="/m">Home</a> › {ancestors}<h1>{icon} {esc(doc.title)}</h1>'
+    crumbtrail = (f'<a href="/m">Home</a> › {ancestors}'
+                  f'<h1 onclick="editTitle()" style="cursor:pointer">'
+                  f'{icon} <span id="idTitle">{esc(doc.title)}</span></h1>')
     return HTMLResponse(render(doc.title, body, id, r.head(),
                                 add_home=add_home, add_allow_item=True,
                                 crumbtrail=crumbtrail))
