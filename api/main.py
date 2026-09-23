@@ -108,6 +108,16 @@ class Naming(BaseModel):
     expect: str | None = EXPECT
 
 
+class Titling(BaseModel):
+    title: str = Field(..., description="The human-facing `# h1`")
+    expect: str | None = EXPECT
+
+
+class Gisting(BaseModel):
+    gist: str = Field(..., description="What this thing is, in one line")
+    expect: str | None = EXPECT
+
+
 class Position(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
     lon: float = Field(..., ge=-180, le=180)
@@ -354,6 +364,20 @@ def rename(id: str, body: Naming):
     return {"ok": True, "name": name, "head": r.head()}
 
 
+@app.put("/things/{id}/title", summary="Edit the human-facing title")
+def set_title(id: str, body: Titling):
+    r = repo()
+    guard(r.set_title, id, body.title, expect=body.expect)
+    return {"ok": True, "head": r.head()}
+
+
+@app.put("/things/{id}/gist", summary="Edit the one-line gist")
+def set_gist(id: str, body: Gisting):
+    r = repo()
+    guard(r.set_gist, id, body.gist, expect=body.expect)
+    return {"ok": True, "head": r.head()}
+
+
 @app.get("/last-action", summary="What the most recent action was")
 def last_action():
     r = repo()
@@ -592,6 +616,20 @@ def phone_thing(id: str):
   </div>
   {qty_row}
   <div class="row" style="margin-top:.5rem">
+    {'<button class="danger" onclick="checkOut()">Check out</button>' if placements else ''}
+    <button class="danger" onclick="deleteThing()">Delete</button>
+  </div>
+</div>
+<div class="card">
+  <h2>Identification</h2>
+  <p class="muted" onclick="editTitle()" style="cursor:pointer">
+    Title: <b id="idTitle">{esc(doc.title)}</b></p>
+  <p class="muted" onclick="editGist()" style="cursor:pointer">
+    Gist: <span id="idGist">{esc(doc.gist) or "(tap to add one)"}</span></p>
+  <p class="muted" onclick="editName()" style="cursor:pointer">
+    Name: <span id="idName">{esc(doc.name)}</span></p>
+  <p style="margin:.5rem 0 0"><code>{esc(id)}</code></p>
+  <div class="row" style="margin-top:.8rem">
     <select id="printMedia">
       <option value="item-50x30" {"selected" if doc.kind != "container" else ""}>Item (50×30)</option>
       <option value="container-40x70" {"selected" if doc.kind == "container" else ""}>Big bin (40×70)</option>
@@ -599,10 +637,7 @@ def phone_thing(id: str):
     </select>
     <button data-title="{esc(doc.title)}"
             onclick="printThing(this, document.getElementById('printMedia').value)">🖨️ Print label</button>
-    {'<button class="danger" onclick="checkOut()">Check out</button>' if placements else ''}
-    <button class="danger" onclick="deleteThing()">Delete</button>
   </div>
-  <p style="margin:.9rem 0 0"><code>{esc(id)}</code></p>
 </div>
 """
     add_home = id if doc.kind == "container" else None

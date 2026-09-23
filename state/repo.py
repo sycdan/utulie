@@ -475,6 +475,26 @@ class StateRepo:
         self._commit(f"rename {old} to {name}")
         return name
 
+    def set_title(self, id_: str, title: str, expect: str | None = None) -> None:
+        """The human-facing `# h1`. Distinct from `name` (the slug), which is
+        also the tree's path component and stays untouched here."""
+        self._expect(expect)
+        title = title.strip()
+        if not title:
+            raise StateError("title cannot be empty")
+        doc = self.doc(id_)
+        old = doc.title
+        doc.title = title
+        self._write_doc(doc)
+        self._commit(f"retitle {old} to {title} ({id_})")
+
+    def set_gist(self, id_: str, gist: str, expect: str | None = None) -> None:
+        self._expect(expect)
+        doc = self.doc(id_)
+        doc.gist = gist
+        self._write_doc(doc)
+        self._commit(f"gist: {doc.title} ({id_})")
+
     def set_position(self, id_: str, lat: float, lon: float,
                      expect: str | None = None) -> None:
         """Record where a thing was last seen.

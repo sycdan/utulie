@@ -555,6 +555,26 @@ def test_sync_status_zero_ahead_of_a_real_upstream(repo, tmp_path):
     assert status["ahead"] == 0
 
 
+def test_set_title_changes_the_h1(repo, house):
+    repo.set_title(house["tin"], "Amaretti Tin (relabelled)")
+    assert repo.doc(house["tin"]).title == "Amaretti Tin (relabelled)"
+
+
+def test_set_title_refuses_empty(repo, house):
+    with pytest.raises(StateError, match="cannot be empty"):
+        repo.set_title(house["tin"], "   ")
+
+
+def test_set_gist_changes_the_gist(repo, house):
+    repo.set_gist(house["tin"], "holds spare label stock")
+    assert repo.doc(house["tin"]).gist == "holds spare label stock"
+
+
+def test_set_gist_can_clear_to_empty(repo, house):
+    repo.set_gist(house["tin"], "")
+    assert repo.doc(house["tin"]).gist == ""
+
+
 def test_sync_status_counts_commits_ahead(repo, tmp_path, house):
     bare = tmp_path / "_bare.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)])

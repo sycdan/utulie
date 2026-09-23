@@ -39,6 +39,24 @@ def test_delete_route_erases_a_thing(client):
     assert client.get(f"/things/{id_}").status_code == 400
 
 
+def test_title_route_edits_the_h1(client):
+    mint = client.post("/things", json={"kind": "item", "title": "Oops", "gist": "g"})
+    id_ = mint.json()["id"]
+
+    resp = client.put(f"/things/{id_}/title", json={"title": "Fixed title"})
+    assert resp.status_code == 200, resp.text
+    assert client.get(f"/things/{id_}").json()["title"] == "Fixed title"
+
+
+def test_gist_route_edits_the_gist(client):
+    mint = client.post("/things", json={"kind": "item", "title": "Thing", "gist": "old"})
+    id_ = mint.json()["id"]
+
+    resp = client.put(f"/things/{id_}/gist", json={"gist": "new gist"})
+    assert resp.status_code == 200, resp.text
+    assert client.get(f"/things/{id_}").json()["gist"] == "new gist"
+
+
 @pytest.fixture
 def client_with_remote(client, tmp_path):
     """`client`'s state repo pushed to a bare remote -- siblings of tmp_path,

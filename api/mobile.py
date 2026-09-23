@@ -303,6 +303,30 @@ async function post(path, body) {
                      body: JSON.stringify(Object.assign({expect: head}, body || {})) });
 }
 
+async function put(path, body) {
+  return act(path, { method: "PUT", headers: {"content-type": "application/json"},
+                     body: JSON.stringify(Object.assign({expect: head}, body || {})) });
+}
+
+async function editTitle() {
+  const v = prompt("Title:", document.getElementById("idTitle").textContent);
+  if (v === null || !v.trim()) return;
+  if (await put(`/things/${ID}/title`, { title: v.trim() })) location.reload();
+}
+
+async function editGist() {
+  const cur = document.getElementById("idGist").textContent;
+  const v = prompt("Gist (one line):", cur === "(tap to add one)" ? "" : cur);
+  if (v === null) return;
+  if (await put(`/things/${ID}/gist`, { gist: v })) location.reload();
+}
+
+async function editName() {
+  const v = prompt("Name (used in the tree path):", document.getElementById("idName").textContent);
+  if (v === null || !v.trim()) return;
+  if (await put(`/things/${ID}/name`, { name: v.trim() })) location.reload();
+}
+
 async function checkOut() {
   if (!confirm("Check this out of its container?")) return;
   if (await post(`/things/${ID}/check-out?expect=${head}`)) location.reload();
