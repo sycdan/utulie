@@ -87,27 +87,85 @@ def test_the_photo_and_the_replace_badge_are_separate_tap_targets(client):
     assert page.count("photoInput').click()") == 2   # badge and placeholder
 
 
-def test_health_reports_the_printer_but_never_fails_on_it(client, monkeypatch):
+RELAY_HELLO = {
+    "host": "labelbox",
+    "media": [
+        {"name": "50x30", "label": "Small (50×30)", "suits": ["item"],
+         "max_lines": 3, "max_chars": 29},
+        {"name": "40x70", "label": "Big bin (40×70)", "suits": ["container"],
+         "max_lines": 2, "max_chars": 40},
+    ],
+}
+
+
+@pytest.fixture
+def relay(monkeypatch):
+    """A connected relay that has announced itself, without a websocket."""
+    monkeypatch.setattr(main_module, "_relay", object())
+    monkeypatch.setattr(main_module, "_relay_info", RELAY_HELLO)
+
+
+def test_health_reports_the_printer_but_never_fails_on_it(client, relay):
     """The relay runs on another machine. An absent one is an ordinary state,
     so it has to show in the payload without moving `ok` -- `ok` is what the
     container healthcheck and the ingress probe read, and an unplugged printer
     must not take the service down."""
-    assert client.get("/health").json() == {"ok": True, "printer": False}
-
-    monkeypatch.setattr(main_module, "_relay", object())
-    assert client.get("/health").json() == {"ok": True, "printer": True}
+    assert client.get("/health").json() == {
+        "ok": True, "printer": {"host": "labelbox", "media": ["50x30", "40x70"]}}
 
 
-def test_a_thing_page_says_so_when_no_print_client_is_connected(client, monkeypatch):
-    """Otherwise the first sign is a 503 after you have already chosen a
-    caption and a medium."""
+def test_a_hello_frame_registers_stock_and_is_not_read_as_a_job_result(client):
+    """The socket carried exactly one kind of frame before this -- a result
+    keyed by job_id -- so a hello has to be told apart by shape, not by being
+    first. Reading it as a result would KeyError and drop the connection."""
+    with client.websocket_connect("/labels/ws") as ws:
+        ws.send_json({"hello": "relay", "host": "labelbox",
+                       "media": [{"name": "50x30", "label": "Small"}]})
+        assert ws.receive_json() == {"hello": "ok"}
+        assert client.get("/health").json()["printer"] == {
+            "host": "labelbox", "media": ["50x30"]}
+
+    assert client.get("/health").json()["printer"] is None   # dropped on close
+
+
+def test_health_printer_is_null_with_no_relay(client):
+    assert client.get("/health").json() == {"ok": True, "printer": None}
+
+
+def test_the_label_card_offers_only_what_the_relay_reported(client, relay):
+    """This process keeps no media list. Adding a stock size has to mean
+    editing the renderer on the machine that owns the printer, and nothing
+    else -- so the options, their names and their budgets all come from the
+    hello frame."""
     id_ = client.post("/things", json={
         "kind": "item", "title": "Labelled", "gist": "g"}).json()["id"]
+    page = client.get(f"/m/{id_}").text
 
-    assert "Print client offline" in client.get(f"/m/{id_}").text
+    assert 'value="50x30" data-max="29" selected' in page   # suits item
+    assert 'value="40x70" data-max="40"' in page
+    assert "Big bin (40×70)" in page
+    assert "via labelbox" in page
 
-    monkeypatch.setattr(main_module, "_relay", object())
-    assert "Print client offline" not in client.get(f"/m/{id_}").text
+
+def test_the_label_card_pre_selects_by_kind_not_by_order(client, relay):
+    """`suits` is the relay's hint. A container should land on container
+    stock even though the item medium is listed first."""
+    id_ = client.post("/things", json={
+        "kind": "container", "title": "Bin", "gist": "g"}).json()["id"]
+    assert 'value="40x70" data-max="40" selected' in client.get(f"/m/{id_}").text
+
+
+def test_a_thing_page_says_how_to_connect_a_relay_when_none_is(client):
+    """Otherwise the first sign is a 503 after you have already chosen a
+    caption and a medium. It names no machine, because with nothing connected
+    there is no machine to name -- the URL is the actionable part."""
+    id_ = client.post("/things", json={
+        "kind": "item", "title": "Labelled", "gist": "g"}).json()["id"]
+    page = client.get(f"/m/{id_}").text
+
+    assert "No print relay connected" in page
+    assert 'id="relayUrl"' in page
+    assert 'id="printMedia"' not in page
 
 
 def test_title_route_edits_the_h1(client):

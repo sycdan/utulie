@@ -411,9 +411,26 @@ async function checkOut() {
   if (await post(`/things/${ID}/check-out?expect=${head}`)) location.reload();
 }
 
-async function printThing(btn, media) {
-  const text = prompt("Caption to print next to the QR (blank uses the quid):", btn.dataset.title || "");
-  if (text === null) return;
+// Advisory, not a limit. The renderer shrinks the font to fit rather than
+// refusing, so past the budget you still get a label -- just a smaller one
+// than the quid you would have got for free. Worth saying before the stock
+// is spent, not worth blocking on: the budget is measured on representative
+// text, and yours may well be narrower.
+function captionBudget() {
+  const sel = document.getElementById("printMedia");
+  if (!sel) return;
+  const max = +sel.selectedOptions[0].dataset.max || 0;
+  const n = document.getElementById("printText").value.trim().length;
+  const out = document.getElementById("printBudget");
+  if (!n) { out.textContent = "Blank prints the quid."; out.style.color = ""; return; }
+  out.textContent = n <= max ? `${n}/${max} characters`
+                             : `${n}/${max} — over budget, this will print small`;
+  out.style.color = n <= max ? "" : "var(--warn)";
+}
+
+async function printThing(btn) {
+  const media = document.getElementById("printMedia").value;
+  const text = document.getElementById("printText").value.trim();
   btn.disabled = true;
   try {
     const qs = new URLSearchParams({media, text});
@@ -422,6 +439,15 @@ async function printThing(btn, media) {
     btn.disabled = false;
   }
 }
+
+// The relay's own URL, from wherever this page is being read -- so an rc or
+// dev instance tells you to point at itself, not at production.
+(function () {
+  const el = document.getElementById("relayUrl");
+  if (el) el.textContent =
+    (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/labels/ws";
+  captionBudget();
+})();
 
 async function deleteThing() {
   if (!confirm("Delete this for good? Can't be undone -- for a real thing you "

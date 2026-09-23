@@ -139,12 +139,17 @@ def health():
     touch the state repo -- a broken UTULIE_STATE should not read as the
     process being down; that is what /check is for.
 
-    `printer` reports the label relay's socket (`_relay`, in the labels section
-    below) and never asserts it: the relay is a process on another machine, and
+    `printer` reports the label relay (`_relay`, in the labels section below)
+    and never asserts it: the relay is a process on another machine, and
     running without one is an ordinary state, not a fault. So `ok` stays true
     when it is absent -- otherwise an unplugged printer would take the
-    container unhealthy and the ingress down with it."""
-    return {"ok": True, "printer": _relay is not None}
+    container unhealthy and the ingress down with it. It is null, or the
+    machine and stock the relay announced."""
+    printer = None
+    if _relay is not None:
+        printer = {"host": _relay_info.get("host"),
+                   "media": [m["name"] for m in _relay_info.get("media", [])]}
+    return {"ok": True, "printer": printer}
 
 
 @app.get("/", include_in_schema=False)
@@ -459,17 +464,32 @@ def sync(remote: str = Body("origin", embed=True)):
 # client is connected" is unambiguous. No persistent queue: a job sent with
 # nobody connected just fails, which is fine for proving the concept.
 _relay: WebSocket | None = None
+# What the connected relay said it is: {"host": ..., "media": [...]}. This
+# server has no media list of its own -- the stock exists on the relay's
+# machine, so the relay is the only thing that can know what it can print.
+_relay_info: dict = {}
 _pending: dict[str, asyncio.Future] = {}
 
 
 @app.websocket("/labels/ws")
 async def labels_ws(ws: WebSocket):
-    global _relay
+    global _relay, _relay_info
     await ws.accept()
-    _relay = ws
+    _relay, _relay_info = ws, {}
     try:
         while True:
             msg = json.loads(await ws.receive_text())
+            # Two kinds of frame, told apart by shape rather than order: a
+            # relay that reconnects and re-announces mid-stream is a hello,
+            # not a malformed job result.
+            if msg.get("hello") == "relay":
+                _relay_info = {"host": msg.get("host") or "an unnamed machine",
+                                "media": msg.get("media") or []}
+                # Acked so the relay can log that its stock actually landed --
+                # a silent registration is indistinguishable from a server too
+                # old to understand the frame.
+                await ws.send_text(json.dumps({"hello": "ok"}))
+                continue
             fut = _pending.pop(msg["job_id"], None)
             if fut and not fut.done():
                 fut.set_result(msg)
@@ -477,11 +497,12 @@ async def labels_ws(ws: WebSocket):
         pass
     finally:
         if _relay is ws:
-            _relay = None
+            _relay, _relay_info = None, {}
 
 
 @app.post("/things/{id}/print", summary="Print a label via the connected dan-pc relay client")
-async def print_thing(id: str, media: str = Query(..., description="Media name, e.g. item-50x30"),
+async def print_thing(id: str, media: str = Query(
+                          ..., description="Media name as the relay reported it, e.g. 50x30"),
                        text: str = Query("", description="Caption printed next to the QR; defaults to the quid")):
     guard(repo().doc, id)
     if _relay is None:
@@ -543,6 +564,54 @@ def phone_index():
     )
     return HTMLResponse(render("Containers", body, head=r.head(),
                                 add_home="", add_allow_item=False))
+
+
+def _label_card(doc) -> str:
+    """Printing, kept out of the Identification card. That card is static
+    facts; this one depends on a machine that may be asleep, and can be
+    replaced wholesale when it is without disturbing the name and the quid.
+
+    Every medium here came from the relay. This process has no list of its
+    own, so a new stock size means editing the renderer on the machine that
+    owns the printer -- and nothing else.
+    """
+    if _relay is None:
+        # No relay means no machine to name, so the message names none. The
+        # URL is built client-side from location, which is always the one the
+        # reader is actually on -- rc and dev instances included.
+        return ('<div class="card"><h2>Label</h2>'
+                '<p class="muted">No print relay connected. Start one on the '
+                'machine with the printer, pointing at:</p>'
+                '<p><code id="relayUrl"></code></p></div>')
+
+    media = _relay_info.get("media", [])
+    if not media:
+        return ('<div class="card"><h2>Label</h2>'
+                '<p class="muted">The relay is connected but reported no '
+                'media it can print.</p></div>')
+
+    # `suits` is the relay's hint about which stock fits which kind, never a
+    # restriction -- every medium stays selectable. A relay that reports none
+    # just leaves the first option selected.
+    pick = next((m["name"] for m in media if doc.kind in m.get("suits", [])),
+                media[0]["name"])
+    opts = "".join(
+        f'<option value="{esc(m["name"])}" data-max="{m.get("max_chars", 0)}"'
+        f'{" selected" if m["name"] == pick else ""}>{esc(m.get("label") or m["name"])}'
+        f'</option>'
+        for m in media
+    )
+    return f"""
+<div class="card">
+  <h2>Label</h2>
+  <select id="printMedia" onchange="captionBudget()">{opts}</select>
+  <input id="printText" class="field" value="{esc(doc.title)}"
+         placeholder="Caption (blank prints the quid)" oninput="captionBudget()">
+  <p class="muted" id="printBudget"></p>
+  <button class="primary" onclick="printThing(this)">🖨️ Print label</button>
+  <p class="muted" style="margin:.6rem 0 0">via {esc(_relay_info.get("host") or "?")}</p>
+</div>
+"""
 
 
 @app.get("/m/{id}", response_class=HTMLResponse, include_in_schema=False)
@@ -622,14 +691,7 @@ def phone_thing(id: str):
 <input id="photoInput" type="file" accept="image/*" capture="environment"
        style="display:none" onchange="updatePhoto()">
 """
-    # Rendered, not fetched: the relay's state is already in this process, so
-    # the page can say so without a round trip. It is a snapshot -- the relay
-    # may connect a second later -- which is why the button below stays live
-    # and this only warns. Pressing it anyway costs a 503 that says the same.
-    printer_warning = "" if _relay is not None else (
-        '<p class="muted" style="margin:.6rem 0 0">Print client offline. '
-        'Start the relay on dan-pc.</p>'
-    )
+    label_card = _label_card(doc)
     body = f"""
 {photo}
 <div class="card">
@@ -662,17 +724,8 @@ def phone_thing(id: str):
   <p class="muted" onclick="editName()" style="cursor:pointer">
     Name: <span id="idName">{esc(doc.name)}</span></p>
   <p style="margin:.5rem 0 0"><code>{esc(id)}</code></p>
-  <div class="row" style="margin-top:.8rem">
-    <select id="printMedia">
-      <option value="item-50x30" {"selected" if doc.kind != "container" else ""}>Item (50×30)</option>
-      <option value="container-40x70" {"selected" if doc.kind == "container" else ""}>Big bin (40×70)</option>
-      <option value="container-50x50-round">Round (50×50)</option>
-    </select>
-    <button data-title="{esc(doc.title)}"
-            onclick="printThing(this, document.getElementById('printMedia').value)">🖨️ Print label</button>
-  </div>
-  {printer_warning}
 </div>
+{label_card}
 """
     add_home = id if doc.kind == "container" else None
     ancestors = "".join(f'<a href="/m/{c.id}">{esc(c.title)}</a> › ' for c in chain)

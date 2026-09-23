@@ -7,21 +7,47 @@ DPMM = 203 / 25.4                       # 7.992 dots per mm
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 BASE = "HTTPS://QRGU.ID/"   # scheme required: iOS treats a bare domain as a search term
 
+# Keys describe the stock and nothing else. What a size is *for* is a guess
+# about the thing being labelled, not a property of the label, so it lives in
+# `suits` -- which is a hint for pre-selection, never a restriction.
 MEDIA = {                               # feed x head, in dots
-    "item-50x30":            dict(feed=240, head=376, shape="rect"),
-    "container-50x50-round": dict(feed=390, head=376, shape="round"),
-    "container-40x70":       dict(feed=533, head=330, shape="rect-tall"),
+    "50x30":      dict(feed=240, head=376, shape="rect",
+                       label="Small (50×30)", suits=["item"]),
+    "50x50-round": dict(feed=390, head=376, shape="round",
+                        label="Round (50×50)", suits=["container"]),
+    "40x70":      dict(feed=533, head=330, shape="rect-tall",
+                       label="Big bin (40×70)", suits=["container"]),
 }
 
 # How much caller-supplied `text` each medium's layout can actually hold.
 # These mirror the line counts the quid-fragment default already uses for
 # that shape -- that default was tuned to fit, so it doubles as the proven
 # capacity. Exceeding it is refused rather than silently clipped off-canvas.
+#
+# max_chars is advisory, not enforced, because width is not a cliff: every
+# layout below shrinks the font to fit rather than refusing, all the way down
+# to 8 px (~1 mm), which prints but cannot be read. These are the lengths at
+# which a single line still clears a 2 mm cap height on representative text --
+# past that you get a label, just a worse one than the free quid default.
 TEXT_LIMITS = {
-    "item-50x30":            dict(max_lines=3, note="beside the QR, short (feed) axis"),
-    "container-50x50-round": dict(max_lines=1, note="below the QR, chord-width limited"),
-    "container-40x70":       dict(max_lines=2, note="beside the QR, across the short (head) axis"),
+    "50x30":       dict(max_lines=3, max_chars=29,
+                        note="beside the QR, short (feed) axis"),
+    "50x50-round": dict(max_lines=1, max_chars=34,
+                        note="below the QR, chord-width limited"),
+    "40x70":       dict(max_lines=2, max_chars=40,
+                        note="beside the QR, across the short (head) axis"),
 }
+
+
+def catalog():
+    """What a client needs in order to offer a medium: the name to send back,
+    something human to show, and how much text fits. The relay reports this on
+    connect so the list lives in one place -- this file, next to the geometry
+    it comes from -- rather than being restated by whatever draws the UI."""
+    return [
+        dict(name=name, label=m["label"], suits=m["suits"], **TEXT_LIMITS[name])
+        for name, m in MEDIA.items()
+    ]
 
 
 def b32(quid: str) -> str:

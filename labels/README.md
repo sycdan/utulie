@@ -28,14 +28,25 @@ The quid is never truncated: every shorter payload lands on the same module coun
 
 | media | QR | module | measured read |
 | --- | --- | --- | --- |
-| `item-50x30` | 27.2 mm | 0.876 mm | 47 cm |
-| `container-50x50-round` | 32.7 mm | 1.126 mm | 48 cm, on a curved surface |
-| `container-40x70` | 38.8 mm | 1.251 mm | not yet measured |
+| `50x30` | 27.2 mm | 0.876 mm | 47 cm |
+| `50x50-round` | 32.7 mm | 1.126 mm | 48 cm, on a curved surface |
+| `40x70` | 38.8 mm | 1.251 mm | not yet measured |
 
 Module pitch quantizes to whole printer dots, so these are steps, not tunable.
 
-Big bins take `container-40x70`; rounds are for containers too small or too
-curved for a rectangle.
+A key names the stock and nothing else. What a size is *for* is a guess about
+the thing being labelled, not a property of the label, so it lives in `suits`
+-- a hint the UI uses to pre-select, never a restriction. Big bins take
+`40x70`; rounds are for containers too small or too curved for a rectangle.
+
+## Text budget
+
+`max_lines` is enforced: exceed it and `render` raises rather than clip off
+canvas. Width is not, because no layout refuses on width -- each one shrinks
+the font to fit, down to 8 px (~1 mm), which prints and cannot be read. So
+`max_chars` is advisory: the length at which one line still clears a 2 mm cap
+height on representative text. Past it you still get a label, just a worse one
+than the quid default you would have got for free.
 
 Media dimensions are the *stock*, measured, not the printhead. The 70 mm stock
 was first assumed to be 50 mm wide and calibrated against the full 376-dot
@@ -58,6 +69,12 @@ drives the B1 on incoming jobs, so `POST /things/{id}/print` from the phone
 reaches the printer without a manual `printlabel.py` step:
 
     python relay_client.py wss://utulie.wildharvesthomestead.com/labels/ws
+
+On connect it announces its hostname and `catalog()`. The server keeps no
+media list of its own, so adding a stock size means editing `MEDIA` and
+`TEXT_LIMITS` here and restarting the relay -- nothing on the server, no
+redeploy. The server acks; a server too old to understand the frame stays
+silent, which is why the ack exists.
 
 One client at a time -- the physical printer only exists in one place.
 Reconnects on drop; a job sent with nobody connected just fails. No queue,
