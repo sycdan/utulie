@@ -70,6 +70,33 @@ def test_contents_lists_direct_children(repo, house):
     assert kids == {house["office"], house["garage"]}
 
 
+def test_reads_walk_the_tree_once_per_instance(repo, house, monkeypatch):
+    """contents, locate and path_of all filter one walk, and a page render
+    calls all three. Production keeps its state repo on a 9p mount that
+    charges milliseconds per file, so the walk count is the whole cost."""
+    walks = []
+    real = StateRepo._walk
+    monkeypatch.setattr(
+        StateRepo, "_walk", lambda self: (walks.append(1), real(self))[1])
+
+    repo.index()
+    repo.contents(house["house"])
+    repo.locate(house["tin"])
+    repo.path_of(house["tin"])
+    assert len(walks) == 1
+
+
+def test_a_tree_write_invalidates_the_memoised_read(repo, house):
+    """Writes go straight to disk and the commit comes after. The memo has to
+    drop at the write, not at the commit -- every caller happens to commit
+    immediately today, and that is not something a cache should rely on."""
+    repo.contents(house["garage"])                  # warm it
+    spanner = repo.mint("item", "Spanner", "a tool")
+    garage = repo.root / repo.index()[0][house["garage"]]
+    repo._write_entry(garage / "spanner", [f"id: {spanner}"])
+    assert [p.id for p in repo.contents(house["garage"])] == [spanner]
+
+
 def test_placing_a_non_fungible_item_again_moves_it(repo, house):
     """One verb. A thing that is not fungible can only be in one place."""
     box = repo.mint("item", "Label box", "a box of labels")

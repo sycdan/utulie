@@ -23,7 +23,7 @@ import re
 import subprocess
 import unicodedata
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,6 +34,9 @@ KB = "kb"
 TREE = ".utulie"
 KINDS = ("item", "container")
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+# git subcommands that cannot change a file this module reads back.
+READ_ONLY_GIT = frozenset({"rev-parse", "status", "log", "rev-list", "diff", "show"})
 
 # KINGSMetaL field order. Anything else is rejected rather than silently kept.
 FIELD_ORDER = ("kind", "id", "name", "gist", "scopes", "meta", "links")
@@ -123,9 +126,29 @@ class DriftError(StateError):
 class StateRepo:
     def __init__(self, root: Path | str):
         self.root = Path(root)
+        # Reads are memoised for this instance's lifetime; every mutation
+        # clears it. An instance is therefore a snapshot: the API makes one
+        # per request, which is the scope this is sized for.
+        self._cache: dict = {}
+
+    def _cached(self, key, make):
+        if key not in self._cache:
+            self._cache[key] = make()
+        return self._cache[key]
+
+    def _write_entry(self, path: Path, lines: list[str]) -> None:
+        """A tree entry, plus the cache drop that has to go with it. Same
+        reason as `_write_doc`: correctness must not rest on a later commit."""
+        self._cache.clear()
+        write_lines(path, lines)
 
     # -- git ------------------------------------------------------------
     def _git(self, *args: str) -> str:
+        # Allow-list, not a deny-list: anything not known to be read-only
+        # drops the cache. A new mutating call added later is then slow, not
+        # wrong -- the failure mode of guessing wrong has to be cheap.
+        if args and args[0] not in READ_ONLY_GIT:
+            self._cache.clear()
         out = subprocess.run(
             ["git", *args], cwd=self.root, capture_output=True, text=True
         )
@@ -141,10 +164,12 @@ class StateRepo:
 
     def head(self) -> str:
         """The commit every read is a view of, and every write asserts against."""
-        try:
-            return self._git("rev-parse", "HEAD").strip()
-        except StateError:
-            return ""
+        def read():
+            try:
+                return self._git("rev-parse", "HEAD").strip()
+            except StateError:
+                return ""
+        return self._cached("head", read)
 
     def sync_status(self) -> dict:
         """Current branch, and how many local commits sit ahead of its
@@ -196,7 +221,7 @@ class StateRepo:
     def _doc_path(self, id_: str) -> Path:
         return self.root / KB / f"{id_}.md"
 
-    def doc(self, id_: str) -> Doc:
+    def _read_doc(self, id_: str) -> Doc:
         path = self._doc_path(id_)
         if not path.exists():
             raise StateError(f"no kb doc for {id_}")
@@ -215,7 +240,18 @@ class StateRepo:
             meta=data.get("meta") or {},
         )
 
+    def doc(self, id_: str) -> Doc:
+        # A copy per call: several writers mutate the Doc they are handed
+        # (rename, set_title, set_position) before writing it back, and the
+        # cached one must not move under an unrelated reader.
+        cached = self._cached(("doc", id_), lambda: self._read_doc(id_))
+        return replace(cached, meta=dict(cached.meta))
+
     def _write_doc(self, doc: Doc) -> None:
+        # Invalidate here rather than trusting the `_commit` that every caller
+        # currently happens to make next: the cache has to be wrong-proof at
+        # the write, not dependent on what follows it.
+        self._cache.clear()
         # KINGSMetaL field order. Insertion order plus sort_keys=False gives it
         # in one dump; quoting is the yaml library's business, not ours.
         data = {"kind": doc.kind, "id": doc.id, "name": doc.name, "gist": doc.gist}
@@ -233,20 +269,40 @@ class StateRepo:
 
     # -- index ----------------------------------------------------------
     def index(self) -> tuple[dict[str, str], list[Placement]]:
-        """Walk the tree once. Returns (container id -> path, placements)."""
+        """Walk the tree once. Returns (container id -> path, placements).
+
+        Memoised: `contents`, `locate` and `path_of` all filter this, so a
+        single page render used to walk the whole tree five times over. That
+        is free on a local disk and ruinous on a 9p mount, which is where
+        production keeps its state repo.
+        """
+        return self._cached("index", self._walk)
+
+    def _walk(self) -> tuple[dict[str, str], list[Placement]]:
         containers: dict[str, str] = {}
         placements: list[Placement] = []
         tree = self.root / TREE
         if not tree.exists():
             return containers, placements
 
-        def container_id(d: Path) -> str | None:
-            marker = d / CONTAINER_MARKER
-            if not marker.exists():
-                return None
-            return (yaml.safe_load(marker.read_text(encoding="utf-8")) or {}).get("id")
+        # Every directory asks for its own marker and its parent's, and every
+        # placement file asks for its parent's again -- the same handful of
+        # markers, read and parsed a dozen times each without this.
+        seen: dict[Path, str | None] = {}
 
-        for d in sorted(p for p in tree.rglob("*") if p.is_dir()):
+        def container_id(d: Path) -> str | None:
+            if d not in seen:
+                marker = d / CONTAINER_MARKER
+                seen[d] = (
+                    (yaml.safe_load(marker.read_text(encoding="utf-8")) or {}).get("id")
+                    if marker.exists() else None
+                )
+            return seen[d]
+
+        # One traversal, split after. rglob walks the whole tree each time it
+        # is called, so asking twice doubles the directory reads.
+        entries = sorted(tree.rglob("*"))
+        for d in (p for p in entries if p.is_dir()):
             cid = container_id(d)
             if cid is None:
                 continue
@@ -256,7 +312,7 @@ class StateRepo:
                 Placement(cid, containers[cid], parent, None)
             )
 
-        for f in sorted(p for p in tree.rglob("*") if p.is_file()):
+        for f in (p for p in entries if p.is_file()):
             if f.name in (CONTAINER_MARKER, ".gitkeep"):
                 continue
             data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
@@ -401,12 +457,12 @@ class StateRepo:
         if doc.kind == "container":
             target = parent / doc.name
             target.mkdir(parents=True, exist_ok=True)
-            write_lines(target / CONTAINER_MARKER, [f"id: {id_}"])
+            self._write_entry(target / CONTAINER_MARKER, [f"id: {id_}"])
         else:
             lines = [f"id: {id_}"]
             if quantity:
                 lines.append(f"quantity: {quantity}")
-            write_lines(parent / doc.name, lines)
+            self._write_entry(parent / doc.name, lines)
         self._commit(f"place {doc.title} in {where}")
 
     def check_out(self, id_: str, expect: str | None = None) -> None:
@@ -475,7 +531,7 @@ class StateRepo:
             self._git("rm", "-q", entry.relative_to(self.root).as_posix())
             self._commit(f"take the last {doc.title} out of {where}")
             return
-        write_lines(entry, [f"id: {id_}", f"quantity: {quantity}"])
+        self._write_entry(entry, [f"id: {id_}", f"quantity: {quantity}"])
         self._commit(f"set {doc.title} to {quantity} in {where}")
 
     def rename(self, id_: str, name: str, expect: str | None = None) -> str:
