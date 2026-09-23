@@ -186,6 +186,11 @@ def things():
             "gist": d.gist,
             "fungible": d.fungible,
             "placed": d.id in placed,
+            # Ancestor titles, root first. A search result you cannot place is
+            # half an answer -- "Mobile fan a" tells you nothing you did not
+            # already know. path_of filters the memoised index, so this is one
+            # walk for the whole list rather than one per thing.
+            "where": [c.title for c in r.path_of(d.id)],
         }
         for d in r.docs().values()
     ]}
@@ -523,8 +528,19 @@ def phone_index():
         f'<span class="qty">{len(r.contents(c))}</span></a></li>'
         for c in sorted(top, key=lambda c: r.doc(c).title.lower())
     )
-    body = (f'<div class="card"><h1>Containers</h1>'
-            f'<ul>{rows or "<li class=muted>Nothing yet</li>"}</ul></div>')
+    # Two cards, one visible at a time. Results are any kind at any depth,
+    # which is not what "Containers" means, so they do not share a card --
+    # an empty search would otherwise render as "Containers / Nothing yet".
+    body = (
+        '<div class="card">'
+        '<input id="searchInput" class="field" type="search" autocomplete="off"'
+        ' placeholder="Search everything…" oninput="runSearch(this.value)"'
+        ' style="margin-top:0"></div>'
+        '<div class="card" id="resultsCard" style="display:none">'
+        '<h1>Results</h1><ul id="resultsList"></ul></div>'
+        f'<div class="card" id="containersCard"><h1>Containers</h1>'
+        f'<ul>{rows or "<li class=muted>Nothing yet</li>"}</ul></div>'
+    )
     return HTMLResponse(render("Containers", body, head=r.head(),
                                 add_home="", add_allow_item=False))
 

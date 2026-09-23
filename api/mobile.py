@@ -89,6 +89,11 @@ PAGE = """<!doctype html>
   li a { color:inherit; text-decoration:none; display:flex;
          justify-content:space-between; gap:.75rem; align-items:baseline; }
   .qty { color:var(--dim); font-variant-numeric:tabular-nums; }
+  /* A result's right-hand slot is a breadcrumb, not a count: it can be long,
+     so it gives up width first and truncates rather than crowding the title. */
+  .where { color:var(--dim); font-size:.8rem; flex:0 1 auto; min-width:0;
+           text-align:right; white-space:nowrap; overflow:hidden;
+           text-overflow:ellipsis; }
   .muted { color:var(--dim); font-size:.9rem; }
   #flash { position:fixed; left:0; right:0; bottom:0; padding:.85rem 1rem;
            background:var(--accent); color:#fff; transform:translateY(100%);
@@ -277,6 +282,51 @@ async function doSync() {
   flash("Synced");
   closeSync();
   refreshSyncStatus();
+}
+
+// -- search (home page only) ------------------------------------------
+// Fetched once, on the first keystroke rather than on every page load:
+// browsing the home page is the common case and does not need the list.
+// The whole repo is a few KB, so filtering happens here and typing costs
+// no round trips.
+let allThings = null;
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function runSearch(raw) {
+  const q = raw.trim().toLowerCase();
+  const results = document.getElementById("resultsCard");
+  const containers = document.getElementById("containersCard");
+  // Empty query is not an empty result -- it means "not searching", so the
+  // containers come back rather than a card claiming nothing matched.
+  if (!q) {
+    results.style.display = "none";
+    containers.style.display = "";
+    return;
+  }
+  containers.style.display = "none";
+  results.style.display = "";
+  if (!allThings) allThings = (await (await fetch("/things")).json()).things;
+
+  const hits = allThings
+    .filter(t => (t.title + " " + t.gist + " " + t.name).toLowerCase().includes(q)
+                 // A quid pasted in from a scan should find its thing too.
+                 || t.id.startsWith(q))
+    .sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
+
+  document.getElementById("resultsList").innerHTML = hits.length
+    ? hits.map(t => {
+        const icon = t.kind === "container" ? "📦" : (t.fungible ? "🔢" : "🏷️");
+        const where = t.where.length ? t.where.join(" › ")
+                                     : (t.placed ? "Top level" : "Not placed");
+        return `<li><a href="/m/${t.id}"><span>${icon} ${esc(t.title)}</span>`
+             + `<span class="where">${esc(where)}</span></a></li>`;
+      }).join("")
+    : '<li class="muted">Nothing matches</li>';
 }
 
 function openPhoto() {

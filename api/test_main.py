@@ -47,6 +47,33 @@ def test_mint_route_defaults_name_to_the_slugified_title(client):
     assert client.get(f"/things/{id_}").json()["name"] == "a-new-thing"
 
 
+def test_things_carries_the_container_chain_for_each_thing(client):
+    """Search runs off this payload, and a result you cannot place is half an
+    answer -- "Mobile fan a" tells you nothing you did not already know."""
+    def mint(kind, title):
+        return client.post("/things", json={
+            "kind": kind, "title": title, "gist": ""}).json()["id"]
+
+    house, shelf, fan = mint("container", "House"), mint("container", "Shelf"), mint("item", "Fan")
+    client.post(f"/things/{house}/place", json={"container": None})
+    client.post(f"/things/{shelf}/place", json={"container": house})
+    client.post(f"/things/{fan}/place", json={"container": shelf})
+
+    where = {t["title"]: t["where"] for t in client.get("/things").json()["things"]}
+    assert where["Fan"] == ["House", "Shelf"]
+    assert where["House"] == []
+
+
+def test_the_home_page_keeps_results_out_of_the_containers_card(client):
+    """Results are any kind at any depth, which is not what "Containers"
+    means. Sharing one card would render a missed search as
+    "Containers / Nothing yet"."""
+    page = client.get("/m").text
+    assert 'id="searchInput"' in page
+    assert 'id="resultsCard" style="display:none"' in page
+    assert 'id="containersCard"' in page
+
+
 def test_the_photo_and_the_replace_badge_are_separate_tap_targets(client):
     """The thumbnail crops to 4:3, so tapping it has to open the full frame.
     That only works if the surrounding box has no tap handler of its own --
